@@ -1,4 +1,4 @@
-# meta developer: @yourusername
+# meta developer: @kolyankid
 
 from .. import loader, utils
 from hikkatl.tl.patched import Message
