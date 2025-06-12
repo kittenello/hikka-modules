@@ -116,4 +116,5 @@ class TrustedManager(loader.Module):
         if text.startswith("."):
             await self.invoke(text.split()[0], " ".join(text.split()[1:]), message=message)
         else:
-            await self.client.send_message(message.chat.id, text)
+            await self.client.send_message(message.peer_id, text)
+
