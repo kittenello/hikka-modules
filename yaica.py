@@ -23,24 +23,22 @@ class VoiceManager(loader.Module):
         "list_header": "📃 Saved voices:",
     }
 
-    strings_ru = {
-        "name": "VoiceManager",
-        "no_reply": "❌ Нет ответа на голосовое сообщение",
-        "not_a_voice": "❌ Это не голосовое сообщение",
-        "saved": "✅ Сохранено как: <code>{}</code>",
-        "not_found": "❌ Не найдено: <code>{}</code>",
-        "usage_vsave": "❌ Использование: .vsave [name]",
-        "usage_vvoice": "❌ Использование: .vvoice [name]",
-        "deleted": "✅ Удалено: <code>{}</code>",
-        "empty_list": "❌ Нет сохранённых голосовых",
-        "list_header": "📃 Сохранённые голосовые:",
-    }
+    VOICE_NAMESPACE = "VoiceManager"
+    VOICE_LIST_KEY = "_list"
+
+    def _get_list(self):
+        return self.db.get(self.VOICE_NAMESPACE, self.VOICE_LIST_KEY) or []
+
+    def _save_list(self, lst):
+        self.db.set(self.VOICE_NAMESPACE, self.VOICE_LIST_KEY, lst)
 
     async def vsavecmd(self, message: Message):
-        """Save voice"""
+        """Save voice: .vsave [name] (reply to voice)"""
         args = utils.get_args_raw(message)
-        reply = await message.get_reply_message()
+        if not args:
+            return await utils.answer(message, self.strings("usage_vsave"))
 
+        reply = await message.get_reply_message()
         if not reply or not reply.media or not isinstance(reply.media, MessageMediaDocument):
             return await utils.answer(message, self.strings("no_reply"))
 
@@ -53,25 +51,31 @@ class VoiceManager(loader.Module):
             return await utils.answer(message, self.strings("not_a_voice"))
 
         file: bytes = await reply.download_media(file=bytes)
-
         encoded = base64.b64encode(file).decode("utf-8")
-        self.db.set("VoiceManager", args, encoded)
+        self.db.set(self.VOICE_NAMESPACE, args, encoded)
+
+        lst = self._get_list()
+        if args not in lst:
+            lst.append(args)
+            self._save_list(lst)
 
         return await utils.answer(message, self.strings("saved").format(args))
 
     async def vvoicecmd(self, message: Message):
-        """Send saved voice"""
+        """Send saved voice: .vvoice [name]"""
         args = utils.get_args_raw(message)
+        if not args:
+            return await utils.answer(message, self.strings("usage_vvoice"))
 
-        data = self.db.get("VoiceManager", args)
+        data = self.db.get(self.VOICE_NAMESPACE, args)
         if not data:
             return await utils.answer(message, self.strings("not_found").format(args))
 
         decoded = base64.b64decode(data)
         file = io.BytesIO(decoded)
-        file.name = "audio.ogg"
+        file.name = "voice.ogg"
 
-        sent = await self.client.send_file(
+        await self.client.send_file(
             message.peer_id,
             file,
             voice_note=True,
@@ -81,27 +85,31 @@ class VoiceManager(loader.Module):
         await message.delete()
 
     async def vdelcmd(self, message: Message):
-        """Delete saved voice"""
+        """Delete saved voice: .vdel [name]"""
         args = utils.get_args_raw(message)
-
-        if not self.db.get("VoiceManager", args):
+        if not args:
             return await utils.answer(message, self.strings("not_found").format(args))
 
-        self.db.remove("VoiceManager", args)
+        if not self.db.get(self.VOICE_NAMESPACE, args):
+            return await utils.answer(message, self.strings("not_found").format(args))
+
+        self.db.remove(self.VOICE_NAMESPACE, args)
+
+        lst = self._get_list()
+        if args in lst:
+            lst.remove(args)
+            self._save_list(lst)
+
         return await utils.answer(message, self.strings("deleted").format(args))
 
     async def vlistcmd(self, message: Message):
-        """List all saved voices"""
-        try:
-            data = self.db.get_all("VoiceManager")
-        except KeyError:
-            return await utils.answer(message, self.strings("empty_list"))
-
-        if not data:
+        """List all saved voices: .vlist"""
+        lst = self._get_list()
+        if not lst:
             return await utils.answer(message, self.strings("empty_list"))
 
         text = self.strings("list_header") + "\n"
-        for key in sorted(data.keys()):
+        for key in sorted(lst):
             text += f"• <code>{key}</code>\n"
 
         return await utils.answer(message, text, parse_mode="html")
