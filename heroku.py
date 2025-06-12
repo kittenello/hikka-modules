@@ -103,12 +103,17 @@ class TrustedManager(loader.Module):
         if uid not in data:
             return
 
-        name = data[uid]
-        if not message.text.startswith(f"{name} "):
+        label = data[uid]
+        prefix = f"{label} "
+
+        if not message.text.startswith(prefix):
             return
 
-        cmd = message.text[len(name) + 1:].strip()
-        if not cmd.startswith("."):
+        text = message.text[len(prefix):].strip()
+        if not text:
             return
 
-        await self.invoke(cmd.split()[0], " ".join(cmd.split()[1:]), message=message)
+        if text.startswith("."):
+            await self.invoke(text.split()[0], " ".join(text.split()[1:]), message=message)
+        else:
+            await self.client.send_message(message.chat.id, text)
