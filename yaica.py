@@ -8,7 +8,7 @@ import io
 
 @loader.tds
 class VoiceManager(loader.Module):
-    """Save and reuse voice messages by name"""
+    """Сохрани и публикуй голосовое от своего имени, удобно, быстро, четко. Использование: .vvoice/vsave/vdel [name]"""
 
     strings = {
         "name": "VoiceManager",
@@ -18,7 +18,6 @@ class VoiceManager(loader.Module):
         "not_found": "❌ Not found: <code>{}</code>",
         "usage_vsave": "❌ Usage: .vsave [name]",
         "usage_vvoice": "❌ Usage: .vvoice [name]",
-        "sent": "✅ Sent: <code>{}</code>",
         "deleted": "✅ Deleted: <code>{}</code>",
         "empty_list": "❌ No saved voices",
         "list_header": "📃 Saved voices:",
@@ -32,14 +31,13 @@ class VoiceManager(loader.Module):
         "not_found": "❌ Не найдено: <code>{}</code>",
         "usage_vsave": "❌ Использование: .vsave [name]",
         "usage_vvoice": "❌ Использование: .vvoice [name]",
-        "sent": "✅ Отправлено: <code>{}</code>",
         "deleted": "✅ Удалено: <code>{}</code>",
         "empty_list": "❌ Нет сохранённых голосовых",
         "list_header": "📃 Сохранённые голосовые:",
     }
 
     async def vsavecmd(self, message: Message):
-        """| Save voice"""
+        """Save voice"""
         args = utils.get_args_raw(message)
         reply = await message.get_reply_message()
 
@@ -57,15 +55,15 @@ class VoiceManager(loader.Module):
         file: bytes = await reply.download_media(file=bytes)
 
         encoded = base64.b64encode(file).decode("utf-8")
-        self.db.set("VoiceManager", args, encoded)
+        self.db.set(f"VoiceManager_{args}", encoded)
 
         return await utils.answer(message, self.strings("saved").format(args))
 
     async def vvoicecmd(self, message: Message):
-        """| Send saved voice"""
+        """Send saved voice"""
         args = utils.get_args_raw(message)
 
-        data = self.db.get("VoiceManager", args)
+        data = self.db.get(f"VoiceManager_{args}")
         if not data:
             return await utils.answer(message, self.strings("not_found").format(args))
 
@@ -82,20 +80,18 @@ class VoiceManager(loader.Module):
 
         await message.delete()
 
-        return await sent.respond(self.strings("sent").format(args), parse_mode="html")
-
     async def vdelcmd(self, message: Message):
-        """| Delete saved voice"""
+        """Delete saved voice"""
         args = utils.get_args_raw(message)
 
-        if not self.db.get("VoiceManager", args):
+        if not self.db.get(f"VoiceManager_{args}"):
             return await utils.answer(message, self.strings("not_found").format(args))
 
-        self.db.remove("VoiceManager", args)
+        self.db.remove(f"VoiceManager_{args}")
         return await utils.answer(message, self.strings("deleted").format(args))
 
     async def vlistcmd(self, message: Message):
-        """| List all saved voices"""
+        """List all saved voices"""
         saved_voices = [
             key.split("_", 1)[1] for key in self.db.keys()
             if key.startswith("VoiceManager_")
