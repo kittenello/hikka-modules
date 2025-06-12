@@ -92,14 +92,16 @@ class VoiceManager(loader.Module):
 
     async def vlistcmd(self, message: Message):
         """List all saved voices"""
-        
-        data = self.db.get("VoiceManager", {})
-        
+        try:
+            data = self.db.get("VoiceManager")
+        except KeyError:
+            return await utils.answer(message, self.strings("empty_list"))
+
         if not data:
             return await utils.answer(message, self.strings("empty_list"))
 
         text = self.strings("list_header") + "\n"
-        for key in data:
+        for key in sorted(data.keys()):
             text += f"• <code>{key}</code>\n"
 
         return await utils.answer(message, text, parse_mode="html")
