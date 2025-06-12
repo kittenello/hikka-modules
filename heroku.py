@@ -1,7 +1,9 @@
 # meta developer: @kolyankid
 
+import base64
 from .. import loader, utils
 from hikkatl.tl.types import Message, MessageMediaDocument, DocumentAttributeAudio
+from hikkatl.tl.custom import File
 import io
 
 
@@ -27,8 +29,11 @@ class VoiceManager(loader.Module):
         if not is_voice:
             return await utils.answer(message, "❌ Not a voice")
 
-        file = await reply.download_media(file=bytes)
-        self.db.set("VoiceManager", args, file)
+        file: bytes = await reply.download_media(file=bytes)
+
+        # Кодируем bytes в base64 строку, чтобы сохранить в БД 
+        encoded = base64.b64encode(file).decode("utf-8")
+        self.db.set("VoiceManager", args, encoded)
 
         return await utils.answer(message, f"✅ '{args}'")
 
@@ -36,11 +41,13 @@ class VoiceManager(loader.Module):
         """Send saved voice: .vvoice [name]"""
         args = utils.get_args_raw(message)
 
-        data = self.db.get("VoiceManager", args, None)
+        data = self.db.get("VoiceManager", args)
         if not data:
             return await utils.answer(message, f"❌ '{args}' not found")
 
-        file = io.BytesIO(data)
+        # Декодируем base64 строку обратно в bytes
+        decoded = base64.b64decode(data)
+        file = io.BytesIO(decoded)
         file.name = "audio.ogg"
 
         await self.client.send_file(
