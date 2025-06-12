@@ -8,7 +8,7 @@ import io
 
 @loader.tds
 class VoiceManager(loader.Module):
-    """Сохрани и публикуй голосовое от своего имени, удобно, быстро, четко. Использование: .vvoice/vsave/vdel [name]"""
+    """Сохрани и публикуй голосовое от своего имени, удобно, быстро, четко. Использование: .vvoice/vsave/vdel [name]."""
 
     strings = {
         "name": "VoiceManager",
@@ -37,7 +37,7 @@ class VoiceManager(loader.Module):
     }
 
     async def vsavecmd(self, message: Message):
-        """Save voice"""
+        """Save voice by name: .vsave [name]"""
         args = utils.get_args_raw(message)
         reply = await message.get_reply_message()
 
@@ -55,15 +55,15 @@ class VoiceManager(loader.Module):
         file: bytes = await reply.download_media(file=bytes)
 
         encoded = base64.b64encode(file).decode("utf-8")
-        self.db.set(f"VoiceManager_{args}", encoded)
+        self.db.set("VoiceManager", args, encoded)
 
         return await utils.answer(message, self.strings("saved").format(args))
 
     async def vvoicecmd(self, message: Message):
-        """Send saved voice"""
+        """Send saved voice: .vvoice [name]"""
         args = utils.get_args_raw(message)
 
-        data = self.db.get(f"VoiceManager_{args}")
+        data = self.db.get("VoiceManager", args)
         if not data:
             return await utils.answer(message, self.strings("not_found").format(args))
 
@@ -81,13 +81,13 @@ class VoiceManager(loader.Module):
         await message.delete()
 
     async def vdelcmd(self, message: Message):
-        """Delete saved voice"""
+        """Delete saved voice: .vdel [name]"""
         args = utils.get_args_raw(message)
 
-        if not self.db.get(f"VoiceManager_{args}"):
+        if not self.db.get("VoiceManager", args):
             return await utils.answer(message, self.strings("not_found").format(args))
 
-        self.db.remove(f"VoiceManager_{args}")
+        self.db.remove("VoiceManager", args)
         return await utils.answer(message, self.strings("deleted").format(args))
 
     async def vlistcmd(self, message: Message):
