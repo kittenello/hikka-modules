@@ -98,7 +98,7 @@ class TrustedManager(loader.Module):
             return
 
         data = self._get_list()
-        uid = message.from_id
+        uid = getattr(message.from_id, "user_id", None)
 
         if uid not in data:
             return
