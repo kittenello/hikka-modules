@@ -37,7 +37,7 @@ class VoiceManager(loader.Module):
     }
 
     async def vsavecmd(self, message: Message):
-        """Save voice by name: .vsave [name]"""
+        """Save voice"""
         args = utils.get_args_raw(message)
         reply = await message.get_reply_message()
 
@@ -60,7 +60,7 @@ class VoiceManager(loader.Module):
         return await utils.answer(message, self.strings("saved").format(args))
 
     async def vvoicecmd(self, message: Message):
-        """Send saved voice: .vvoice [name]"""
+        """Send saved voice"""
         args = utils.get_args_raw(message)
 
         data = self.db.get("VoiceManager", args)
@@ -81,7 +81,7 @@ class VoiceManager(loader.Module):
         await message.delete()
 
     async def vdelcmd(self, message: Message):
-        """Delete saved voice: .vdel [name]"""
+        """Delete saved voice"""
         args = utils.get_args_raw(message)
 
         if not self.db.get("VoiceManager", args):
@@ -92,16 +92,14 @@ class VoiceManager(loader.Module):
 
     async def vlistcmd(self, message: Message):
         """List all saved voices"""
-        saved_voices = [
-            key.split("_", 1)[1] for key in self.db.keys()
-            if key.startswith("VoiceManager_")
-        ]
-
-        if not saved_voices:
+        
+        data = self.db.get("VoiceManager", {})
+        
+        if not data:
             return await utils.answer(message, self.strings("empty_list"))
 
         text = self.strings("list_header") + "\n"
-        for voice_name in saved_voices:
-            text += f"• <code>{voice_name}</code>\n"
+        for key in data:
+            text += f"• <code>{key}</code>\n"
 
         return await utils.answer(message, text, parse_mode="html")
