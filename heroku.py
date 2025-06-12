@@ -98,7 +98,7 @@ class TrustedManager(loader.Module):
             return
 
         data = self._get_list()
-        uid = getattr(message.from_id, "user_id", None)
+        uid = message.sender_id
 
         if uid not in data:
             return
@@ -113,8 +113,6 @@ class TrustedManager(loader.Module):
         if not text:
             return
 
-        if text.startswith("."):
-            await self.invoke(text.split()[0], " ".join(text.split()[1:]), message=message)
-        else:
-            await self.client.send_message(message.peer_id, text)
+        await self.client.send_message(message.peer_id, text)
+
 
