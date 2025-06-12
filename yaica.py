@@ -8,19 +8,19 @@ import io
 
 @loader.tds
 class VoiceManager(loader.Module):
-    """Сохрани и публикуй голосовое от своего имени, удобно, быстро, четко. Использование: .vvoice/vsave/vdel [name]."""
+    """Сохрани и публикуй голосовое от своего имени. Команды: .vsave, .vvoice, .vdel, .vlist"""
 
     strings = {
         "name": "VoiceManager",
-        "no_reply": "❌ No voice reply",
-        "not_a_voice": "❌ Not a voice message",
-        "saved": "✅ Saved as: <code>{}</code>",
-        "not_found": "❌ Not found: <code>{}</code>",
-        "usage_vsave": "❌ Usage: .vsave [name]",
-        "usage_vvoice": "❌ Usage: .vvoice [name]",
-        "deleted": "✅ Deleted: <code>{}</code>",
-        "empty_list": "❌ No saved voices",
-        "list_header": "📃 Saved voices:",
+        "no_reply": "❌ Нет ответа на голосовое сообщение",
+        "not_a_voice": "❌ Это не голосовое сообщение",
+        "saved": "✅ Сохранено как: <code>{}</code>",
+        "not_found": "❌ Не найдено: <code>{}</code>",
+        "usage_vsave": "❌ Использование: .vsave [название]",
+        "usage_vvoice": "❌ Использование: .vvoice [название]",
+        "deleted": "✅ Удалено: <code>{}</code>",
+        "empty_list": "❌ Нет сохранённых голосовых",
+        "list_header": "📃 Сохранённые голосовые:",
     }
 
     VOICE_NAMESPACE = "VoiceManager"
@@ -33,7 +33,7 @@ class VoiceManager(loader.Module):
         self.db.set(self.VOICE_NAMESPACE, self.VOICE_LIST_KEY, lst)
 
     async def vsavecmd(self, message: Message):
-        """Save voice: .vsave [name] (reply to voice)"""
+        """Сохраняет голосовое сообщение"""
         args = utils.get_args_raw(message)
         if not args:
             return await utils.answer(message, self.strings("usage_vsave"))
@@ -62,7 +62,7 @@ class VoiceManager(loader.Module):
         return await utils.answer(message, self.strings("saved").format(args))
 
     async def vvoicecmd(self, message: Message):
-        """Send saved voice: .vvoice [name]"""
+        """Отправляет сохранённое голосовое сообщение"""
         args = utils.get_args_raw(message)
         if not args:
             return await utils.answer(message, self.strings("usage_vvoice"))
@@ -85,7 +85,7 @@ class VoiceManager(loader.Module):
         await message.delete()
 
     async def vdelcmd(self, message: Message):
-        """Delete saved voice: .vdel [name]"""
+        """Удаляет голосовое сообщение"""
         args = utils.get_args_raw(message)
         if not args:
             return await utils.answer(message, self.strings("not_found").format(args))
@@ -93,7 +93,7 @@ class VoiceManager(loader.Module):
         if not self.db.get(self.VOICE_NAMESPACE, args):
             return await utils.answer(message, self.strings("not_found").format(args))
 
-        self.db.remove(self.VOICE_NAMESPACE, args)
+        self.db.set(self.VOICE_NAMESPACE, args, None)
 
         lst = self._get_list()
         if args in lst:
@@ -103,7 +103,7 @@ class VoiceManager(loader.Module):
         return await utils.answer(message, self.strings("deleted").format(args))
 
     async def vlistcmd(self, message: Message):
-        """List all saved voices: .vlist"""
+        """Список сохраненных голосовых сообщений"""
         lst = self._get_list()
         if not lst:
             return await utils.answer(message, self.strings("empty_list"))
