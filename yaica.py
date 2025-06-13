@@ -44,7 +44,7 @@ class VoiceManager(loader.Module):
 
         attrs = reply.media.document.attributes
         is_voice = any(isinstance(attr, DocumentAttributeAudio) and attr.voice for attr in attrs)
-        is_round = reply.media.document.supports_streaming and reply.media.document.mime_type == "video/mp4"
+        is_round = getattr(reply.media.document, "supports_streaming", False) and reply.media.document.mime_type == "video/mp4"
 
         if not is_voice and not is_round:
             return await utils.answer(message, self.strings("not_voice"))
