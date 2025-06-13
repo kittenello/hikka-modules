@@ -2,12 +2,14 @@
 
 from .. import loader, utils
 from hikkatl.tl.patched import Message
+import random
 
 @loader.tds
 class TlMod(loader.Module):
-    """Конвертирует текст в анонимый шрифт"""
+    """Конвертирует текст в анонимный шрифт"""
 
     strings = {"name": "TlMod"}
+
 
     STYLE_MAP = {
         'а': 'ᴀ', 'б': 'б', 'в': 'ʙ', 'г': 'ᴦ', 'д': 'д', 'е': 'ᴇ',
@@ -24,11 +26,19 @@ class TlMod(loader.Module):
         'y': 'ʏ', 'z': 'ᴢ'
     }
 
+    EMOJI_LIST = [
+        "❃︎", "♛︎", "✔︎", "✓︎", "♂︎", "✌︎", "☢︎", "☣︎",
+        "☠︎", "☮︎", "☯︎", "㊣︎", "♣︎", "♠︎", "❥︎", "✘︎"
+    ]
+
     async def tlcmd(self, message: Message):
-        """.tl [text] ААА"""
+        """[text]"""
         args = utils.get_args_raw(message)
         if not args:
             return await message.delete()
 
         converted = ''.join(self.STYLE_MAP.get(c.lower(), c) for c in args)
-        await message.edit(converted)
+        emoji = random.choice(self.EMOJI_LIST)
+
+        result = f"{emoji} {converted} {emoji}"
+        await message.edit(result)
