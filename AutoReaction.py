@@ -1,22 +1,23 @@
+__version__ = (1, 0, 0)
 
+# 1
 # meta developer: @your_username
 
-import asyncio
+from telethon.tl.functions.channels import JoinChannelRequest
 from telethon.tl.functions.messages import SendReactionRequest
-from telethon.tl.types import Message
-from telethon import functions, types
+from telethon.tl.types import Message, Channel
 from .. import loader, utils
 
 @loader.tds
 class AutoReactionMod(loader.Module):
-    """Автоматически ставит реакции на новые сообщения по ссылке."""
+    """Ставит реакции на новые сообщения в указанных каналах"""
 
     strings = {
         "name": "AutoReaction",
-        "usage": "<b>Использование:</b> .au [ссылка] [эмодзи или ID]</b>",
+        "usage": "<b>Использование:</b> .au [ссылка] [реакция]",
         "added": (
             "<b>✅ Реакция добавлена:</b>\n"
-            "Ссылка: <a href='{link}'>{title}</a>\n"
+            "Канал: <a href='{link}'>{title}</a>\n"
             "Реакция: {reaction}\n"
             "ID авто-реакции: <code>{id}</code>"
         ),
@@ -25,14 +26,16 @@ class AutoReactionMod(loader.Module):
         "removed": "<b>🗑️ Автореакция с ID <code>{id}</code> удалена.</b>",
         "not_found": "<b>⚠️ Автореакция с ID <code>{id}</code> не найдена.</b>",
         "invalid_reaction": "<b>❌ Неверная реакция.</b>",
+        "joined": "<b>👋 Присоединились к каналу</b>",
+        "failed_to_join": "<b>❌ Не удалось присоединиться к каналу</b>",
     }
 
     strings_ru = {
         "name": "AutoReaction",
-        "usage": "<b>Использование:</b> .au [ссылка] [эмодзи или ID]",
+        "usage": "<b>Использование:</b> .au [ссылка] [реакция]",
         "added": (
             "<b>✅ Реакция добавлена:</b>\n"
-            "Ссылка: <a href='{link}'>{title}</a>\n"
+            "Канал: <a href='{link}'>{title}</a>\n"
             "Реакция: {reaction}\n"
             "ID авто-реакции: <code>{id}</code>"
         ),
@@ -41,6 +44,8 @@ class AutoReactionMod(loader.Module):
         "removed": "<b>🗑️ Автореакция с ID <code>{id}</code> удалена.</b>",
         "not_found": "<b>⚠️ Автореакция с ID <code>{id}</code> не найдена.</b>",
         "invalid_reaction": "<b>❌ Неверная реакция.</b>",
+        "joined": "<b>👋 Присоединились к каналу</b>",
+        "failed_to_join": "<b>❌ Не удалось присоединиться к каналу</b>",
     }
 
     def __init__(self):
@@ -49,7 +54,6 @@ class AutoReactionMod(loader.Module):
 
     async def client_ready(self, client, db):
         self._client = client
-        self.db = db
         saved = self.get("reactions")
         if saved:
             self.reactions = saved
@@ -68,38 +72,41 @@ class AutoReactionMod(loader.Module):
         url, reaction = args[0], args[1].strip()
 
         try:
-            chat, msg_id = await self._client.resolve_message_url(url)
-        except Exception as e:
+            chat, _ = await self._client.resolve_message_url(url)
+        except Exception:
             await utils.answer(message, "<b>❌ Не удалось распознать ссылку.</b>")
             return
 
-        chat_id = utils.get_chat_id(chat)
-        title = chat.title if hasattr(chat, "title") else "Неизвестный чат"
+        if not isinstance(chat, Channel):
+            await utils.answer(message, "<b>❌ Это не канал.</b>")
+            return
 
-        # Проверка реакции
+        # Проверяем, состоите ли вы в канале
+        try:
+            await self._client.get_participant(chat)
+        except Exception:
+            try:
+                await self._client(JoinChannelRequest(chat))
+                await utils.answer(message, self.strings("joined"))
+            except Exception:
+                await utils.answer(message, self.strings("failed_to_join"))
+                return
+
+        chat_id = utils.get_chat_id(chat)
+        title = chat.title
+
+        # Обработка реакции
         if reaction.isdigit():
             emoji_id = int(reaction)
-            try:
-                data = await self._client(
-                    functions.messages.GetCustomEmojiStickersRequest([emoji_id])
-                )
-                if not data:
-                    raise ValueError
-                emoji = data[0].alt
-            except Exception:
-                await utils.answer(message, self.strings("invalid_reaction"))
-                return
             reaction_data = {"custom_emoji_id": str(emoji_id)}
         else:
-            emoji = reaction
-            reaction_data = {"emoticon": emoji}
+            reaction_data = {"emoticon": reaction.strip()}
 
         self.reaction_counter += 1
         rid = self.reaction_counter
 
         self.reactions[rid] = {
             "chat_id": chat_id,
-            "msg_id": msg_id,
             "reaction": reaction_data,
         }
 
@@ -110,7 +117,7 @@ class AutoReactionMod(loader.Module):
             self.strings("added").format(
                 link=url,
                 title=title,
-                reaction=emoji,
+                reaction=reaction.strip(),
                 id=rid,
             ),
         )
@@ -150,7 +157,7 @@ class AutoReactionMod(loader.Module):
 
     async def watcher(self, message: Message):
         """Ставит реакцию на новые сообщения в отслеживаемых чатах"""
-        if not isinstance(message, Message) or not message.chat_id:
+        if not getattr(message, "chat_id", None):
             return
 
         for rid, data in self.reactions.items():
@@ -164,5 +171,5 @@ class AutoReactionMod(loader.Module):
                             reaction=[data["reaction"]],
                         )
                     )
-                except Exception as e:
-                    await utils.answer(message, "Не удалось поставить реакцию: {e}")
+                except Exception:
+                    pass
