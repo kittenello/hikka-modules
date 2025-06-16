@@ -1,21 +1,20 @@
-
 # meta developer: @your_username
 
 from telethon.tl.functions.channels import JoinChannelRequest
 from telethon.tl.functions.messages import SendReactionRequest
-from telethon.tl.types import Message, Channel
+from telethon.tl.types import Message, Channel, Chat
 from .. import loader, utils
 
 @loader.tds
 class AutoReactionMod(loader.Module):
-    """Автоматически ставит реакции на новые сообщения в указанных каналах"""
+    """Автоматически ставит реакции на новые сообщения в указанных каналах и группах"""
 
     strings = {
         "name": "AutoReaction",
         "usage": "<b>Использование:</b> .au [ссылка] [реакция]",
         "added": (
             "<b>✅ Реакция добавлена:</b>\n"
-            "Канал: <a href='{link}'>{title}</a>\n"
+            "Чат: <a href='{link}'>{title}</a>\n"
             "Реакция: {reaction}\n"
             "ID авто-реакции: <code>{id}</code>"
         ),
@@ -24,8 +23,8 @@ class AutoReactionMod(loader.Module):
         "removed": "<b>🗑️ Автореакция с ID <code>{id}</code> удалена.</b>",
         "not_found": "<b>⚠️ Автореакция с ID <code>{id}</code> не найдена.</b>",
         "invalid_reaction": "<b>❌ Неверная реакция.</b>",
-        "joined": "<b>👋 Присоединились к каналу</b>",
-        "failed_to_join": "<b>❌ Не удалось присоединиться к каналу</b>",
+        "joined": "<b>👋 Присоединились к чату</b>",
+        "failed_to_join": "<b>❌ Не удалось присоединиться к чату</b>",
     }
 
     strings_ru = {
@@ -33,7 +32,7 @@ class AutoReactionMod(loader.Module):
         "usage": "<b>Использование:</b> .au [ссылка] [реакция]",
         "added": (
             "<b>✅ Реакция добавлена:</b>\n"
-            "Канал: <a href='{link}'>{title}</a>\n"
+            "Чат: <a href='{link}'>{title}</a>\n"
             "Реакция: {reaction}\n"
             "ID авто-реакции: <code>{id}</code>"
         ),
@@ -42,8 +41,8 @@ class AutoReactionMod(loader.Module):
         "removed": "<b>🗑️ Автореакция с ID <code>{id}</code> удалена.</b>",
         "not_found": "<b>⚠️ Автореакция с ID <code>{id}</code> не найдена.</b>",
         "invalid_reaction": "<b>❌ Неверная реакция.</b>",
-        "joined": "<b>👋 Присоединились к каналу</b>",
-        "failed_to_join": "<b>❌ Не удалось присоединиться к каналу</b>",
+        "joined": "<b>👋 Присоединились к чату</b>",
+        "failed_to_join": "<b>❌ Не удалось присоединиться к чату</b>",
     }
 
     def __init__(self):
@@ -75,11 +74,12 @@ class AutoReactionMod(loader.Module):
             await utils.answer(message, "<b>❌ Не удалось распознать ссылку.</b>")
             return
 
-        if not isinstance(chat, Channel):
-            await utils.answer(message, "<b>❌ Это не канал.</b>")
+        # Разрешаем как каналы, так и группы
+        if not isinstance(chat, (Channel, Chat)):
+            await utils.answer(message, "<b>❌ Это не канал или группа.</b>")
             return
 
-        # Проверяем, состоите ли вы в канале
+        # Проверяем, состоите ли вы в чате
         try:
             await self._client.get_participant(chat)
         except Exception:
