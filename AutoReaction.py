@@ -1,26 +1,22 @@
 
 # meta developer: @your_username
 
-
 import asyncio
-import logging
-from telethon.tl.functions.messages import SetTypingRequest
-from telethon.tl.types import Channel, Message
+from telethon.tl.functions.messages import SendReactionRequest
+from telethon.tl.types import Message
+from telethon import functions, types
 from .. import loader, utils
-
-logger = logging.getLogger(__name__)
-
 
 @loader.tds
 class AutoReactionMod(loader.Module):
-    """Автоматически ставит реакции на новые сообщения в указанных каналах."""
+    """Автоматически ставит реакции на новые сообщения по ссылке."""
 
     strings = {
         "name": "AutoReaction",
-        "usage": "<b>Использование:</b> .au [@канал/ID] [реакция]",
+        "usage": "<b>Использование:</b> .au [ссылка] [эмодзи или ID]</b>",
         "added": (
             "<b>✅ Реакция добавлена:</b>\n"
-            "Канал: <code>{chat}</code>\n"
+            "Ссылка: <a href='{link}'>{title}</a>\n"
             "Реакция: {reaction}\n"
             "ID авто-реакции: <code>{id}</code>"
         ),
@@ -32,10 +28,11 @@ class AutoReactionMod(loader.Module):
     }
 
     strings_ru = {
-        "usage": "<b>Использование:</b> .au [@канал/ID] [реакция]",
+        "name": "AutoReaction",
+        "usage": "<b>Использование:</b> .au [ссылка] [эмодзи или ID]",
         "added": (
             "<b>✅ Реакция добавлена:</b>\n"
-            "Канал: <code>{chat}</code>\n"
+            "Ссылка: <a href='{link}'>{title}</a>\n"
             "Реакция: {reaction}\n"
             "ID авто-реакции: <code>{id}</code>"
         ),
@@ -47,66 +44,93 @@ class AutoReactionMod(loader.Module):
     }
 
     def __init__(self):
-        self.reactions = {}
-        self.reaction_counter = 0
+        self.reactions = {}  # Хранение реакций
+        self.reaction_counter = 0  # Уникальные ID
+
+    async def client_ready(self, client, db):
+        self._client = client
+        self.db = db
+        saved = self.get("reactions")
+        if saved:
+            self.reactions = saved
+            self.reaction_counter = max(saved.keys(), default=0)
 
     async def aucmd(self, message: Message):
         """
-        Добавляет авто-реакцию.
-        Использование: .au [@канал/ID] [реакция]
+        Добавляет авто-реакцию через ссылку.
+        Использование: .au [ссылка] [эмодзи или ID]
         """
-        args = utils.get_args_raw(message)
-        if not args:
+        args = utils.get_args_raw(message).split(maxsplit=1)
+        if len(args) != 2:
             await utils.answer(message, self.strings("usage"))
             return
 
-        try:
-            chat_input, reaction = args.split(maxsplit=1)
-        except ValueError:
-            await utils.answer(message, self.strings("usage"))
-            return
+        url, reaction = args[0], args[1].strip()
 
         try:
-            chat = await self._client.get_entity(chat_input)
+            chat, msg_id = await self._client.resolve_message_url(url)
         except Exception as e:
-            logger.error(f"Ошибка получения чата: {e}")
-            await utils.answer(message, "<b>❌ Не удалось найти канал/чат.</b>")
+            await utils.answer(message, "<b>❌ Не удалось распознать ссылку.</b>")
             return
 
         chat_id = utils.get_chat_id(chat)
+        title = chat.title if hasattr(chat, "title") else "Неизвестный чат"
 
-        if not reaction or len(reaction.strip()) == 0:
-            await utils.answer(message, self.strings("invalid_reaction"))
-            return
+        # Проверка реакции
+        if reaction.isdigit():
+            emoji_id = int(reaction)
+            try:
+                data = await self._client(
+                    functions.messages.GetCustomEmojiStickersRequest([emoji_id])
+                )
+                if not data:
+                    raise ValueError
+                emoji = data[0].alt
+            except Exception:
+                await utils.answer(message, self.strings("invalid_reaction"))
+                return
+            reaction_data = {"custom_emoji_id": str(emoji_id)}
+        else:
+            emoji = reaction
+            reaction_data = {"emoticon": emoji}
 
         self.reaction_counter += 1
-        reaction_id = self.reaction_counter
+        rid = self.reaction_counter
 
-        self.reactions[reaction_id] = {
+        self.reactions[rid] = {
             "chat_id": chat_id,
-            "reaction": reaction.strip(),
+            "msg_id": msg_id,
+            "reaction": reaction_data,
         }
+
+        self.set("reactions", self.reactions)
 
         await utils.answer(
             message,
             self.strings("added").format(
-                chat=chat_input,
-                reaction=reaction.strip(),
-                id=reaction_id,
+                link=url,
+                title=title,
+                reaction=emoji,
+                id=rid,
             ),
         )
 
     async def aulistcmd(self, message: Message):
-        """Показывает список всех активных авто-реакций"""
+        """Показывает список всех авто-реакций"""
         if not self.reactions:
             await utils.answer(message, self.strings("no_reactions"))
             return
 
-        response = self.strings("list_header")
+        res = self.strings("list_header")
         for rid, data in self.reactions.items():
-            response += f"• ID: <code>{rid}</code>, Чат: <code>{data['chat_id']}</code>, Реакция: {data['reaction']}\n"
+            emoji = (
+                data["reaction"]["custom_emoji_id"]
+                if "custom_emoji_id" in data["reaction"]
+                else data["reaction"]["emoticon"]
+            )
+            res += f"• ID: <code>{rid}</code>, Чат: <code>{data['chat_id']}</code>, Реакция: {emoji}\n"
 
-        await utils.answer(message, response)
+        await utils.answer(message, res)
 
     async def audcmd(self, message: Message):
         """Удаляет авто-реакцию по ID"""
@@ -121,19 +145,24 @@ class AutoReactionMod(loader.Module):
             return
 
         del self.reactions[rid]
+        self.set("reactions", self.reactions)
         await utils.answer(message, self.strings("removed").format(id=rid))
 
     async def watcher(self, message: Message):
-        """Ставит реакцию, если сообщение из отслеживаемого чата"""
+        """Ставит реакцию на новые сообщения в отслеживаемых чатах"""
         if not isinstance(message, Message) or not message.chat_id:
             return
 
         for rid, data in self.reactions.items():
             if message.chat_id == data["chat_id"]:
                 try:
-                    await self._client(SetTypingRequest(
-                        peer=message.chat_id,
-                        action=data["reaction"]
-                    ))
+                    await self._client(
+                        SendReactionRequest(
+                            peer=message.peer_id,
+                            msg_id=message.id,
+                            big=True,
+                            reaction=[data["reaction"]],
+                        )
+                    )
                 except Exception as e:
-                    logger.warning(f"Не удалось поставить реакцию: {e}")
+                    await utils.answer(message, "Не удалось поставить реакцию: {e}")
