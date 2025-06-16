@@ -1,6 +1,4 @@
-__version__ = (1, 0, 0)
 
-# 1
 # meta developer: @your_username
 
 from telethon.tl.functions.channels import JoinChannelRequest
@@ -10,7 +8,7 @@ from .. import loader, utils
 
 @loader.tds
 class AutoReactionMod(loader.Module):
-    """Ставит реакции на новые сообщения в указанных каналах"""
+    """Автоматически ставит реакции на новые сообщения в указанных каналах"""
 
     strings = {
         "name": "AutoReaction",
