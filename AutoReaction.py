@@ -1,17 +1,16 @@
-
-# meta developer: @kolyankid
-
+# meta developer: @your_username
 
 import asyncio
 import uuid
 from telethon.tl.types import Message, ReactionEmoji
 from telethon.tl.functions.messages import SendReactionRequest
+from telethon.errors import ChannelInvalidError, ChannelPrivateError, ChatAdminRequiredError
 from .. import loader, utils
 
 
 @loader.tds
 class AutoReactionsMod(loader.Module):
-    """Automatically adds reactions to messages in specified chats"""
+    """Automatically adds reactions to messages in specified chats from your account"""
 
     strings = {
         "name": "AutoReactions",
@@ -19,8 +18,9 @@ class AutoReactionsMod(loader.Module):
         "list": "<b>📋 Auto-reactions list:</b>\n{}",
         "no_reactions": "<b>📭 No auto-reactions set</b>",
         "deleted": "<b>🗑 Auto-reaction with ID: <code>{}</code> deleted</b>",
-        "invalid_args": "<b>❌ Invalid arguments. Use: <code>.au [@chat/ID] [reaction/ID]</code></b>",
+        "invalid_args": "<b>❌ Invalid arguments. Use: <code>.au [@chat/ID] [reaction/ID]</code> or reply to a message with a reaction</b>",
         "invalid_reaction": "<b>❌ Invalid reaction. Reply to a message with a reaction or provide a valid emoji/ID</b>",
+        "chat_not_found": "<b>❌ Chat not found or inaccessible. Ensure the chat exists and you have access to it</b>",
         "_cmd_doc_au": "[@chat/ID] [reaction/ID] - Set auto-reaction for a chat",
         "_cmd_doc_aulist": "Show list of active auto-reactions",
         "_cmd_doc_aud": "[ID] - Delete auto-reaction by ID",
@@ -31,8 +31,9 @@ class AutoReactionsMod(loader.Module):
         "list": "<b>📋 Список автореакций:</b>\n{}",
         "no_reactions": "<b>📭 Нет установленных автореакций</b>",
         "deleted": "<b>🗑 Автореакция с ID: <code>{}</code> удалена</b>",
-        "invalid_args": "<b>❌ Неверные аргументы. Используйте: <code>.au [@чат/ID] [реакция/ID]</code></b>",
+        "invalid_args": "<b>❌ Неверные аргументы. Используйте: <code>.au [@чат/ID] [реакция/ID]</code> или ответьте на сообщение с реакцией</b>",
         "invalid_reaction": "<b>❌ Неверная реакция. Ответьте на сообщение с реакцией или укажите действительный эмодзи/ID</b>",
+        "chat_not_found": "<b>❌ Чат не найден или недоступен. Убедитесь, что чат существует и у вас есть к нему доступ</b>",
         "_cmd_doc_au": "[@чат/ID] [реакция/ID] - Установить автореакцию для чата",
         "_cmd_doc_aulist": "Показать список активных автореакций",
         "_cmd_doc_aud": "[ID] - Удалить автореакцию по ID",
@@ -68,6 +69,9 @@ class AutoReactionsMod(loader.Module):
             chat_title = getattr(chat, "title", "Private Chat")
             chat_link = f"https://t.me/{chat.username}" if getattr(chat, "username",
                                                                    None) else f"https://t.me/c/{chat_id}"
+        except (ChannelInvalidError, ChannelPrivateError, ValueError):
+            await utils.answer(message, self.strings("chat_not_found"))
+            return
         except Exception:
             await utils.answer(message, self.strings("invalid_args"))
             return
@@ -160,8 +164,11 @@ class AutoReactionsMod(loader.Module):
         chat_id = utils.get_chat_id(message)
         for data in self._reactions.values():
             if data["chat_id"] == chat_id:
-                await self._client(SendReactionRequest(
-                    peer=message.chat_id,
-                    msg_id=message.id,
-                    reaction=[ReactionEmoji(emoticon=data["reaction"])]
-                ))
+                try:
+                    await self._client(SendReactionRequest(
+                        peer=message.chat_id,
+                        msg_id=message.id,
+                        reaction=[ReactionEmoji(emoticon=data["reaction"])]
+                    ))
+                except ChatAdminRequiredError:
+                    pass
