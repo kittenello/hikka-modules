@@ -1,7 +1,5 @@
 # meta developer: @kolyankid
 
-__version__ = (1, 0, 0)
-
 from .. import loader, utils
 from telethon.tl.types import Message, ReactionEmoji, ReactionCustomEmoji
 import asyncio
@@ -45,10 +43,6 @@ class AutoReactionMod(loader.Module):
         self.db.set("AutoReaction", "reactions", self.reactions)
 
     async def aucmd(self, message: Message):
-        """
-        .au [@канал/ID канала] [эмодзи или custom_emoji_id]
-        Добавляет авто-реакцию на сообщения в указанном чате
-        """
         args = utils.get_args_raw(message).split(maxsplit=1)
         if len(args) < 2:
             return await utils.answer(message, self.strings["no_reaction"])
