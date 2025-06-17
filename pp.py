@@ -4,14 +4,14 @@ from .. import loader, utils
 from hikkatl.tl.patched import Message
 
 @loader.tds
-class PPMod(loader.Module):
+class GOVNO(loader.Module):
     """ку"""
 
     strings = {
-        "name": "PPMod",
+        "name": "GOVNO",
     }
 
-    async def ppcmd(self, message: Message):
+    async def pcmd(self, message: Message):
         """#текст"""
         args = utils.get_args_raw(message)
         
