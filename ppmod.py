@@ -5,20 +5,20 @@ from hikkatl.tl.patched import Message
 
 @loader.tds
 class PPMod(loader.Module):
-    """che takoe"""
+    """ку"""
 
     strings = {
         "name": "PPMod",
     }
 
     async def ppcmd(self, message: Message):
-        """<текст> — Добавляет текст и подписку"""
+        """#текст"""
         args = utils.get_args_raw(message)
         
         if not args:
             return await message.delete()
 
-        link_text = "[самые гениальные строчки с песен. Отписаться](https://t.me/samiegenius)" 
+        link_text = "<a href='https://t.me/samiegenius'>самые  гениальные строчки с песен. Отписаться</a>"
         full_text = f"{args}\n\n{link_text}"
-        
-        await message.edit(full_text)
+
+        await message.edit(full_text, parse_mode="html")
