@@ -93,7 +93,7 @@ class AutoReactMod(loader.Module):
 
         chat_id, emoji = args
         if chat_id not in self.active_chats:
-            await utils.answer(message, self.strings["chat_n ot_found"].format(chat_id))
+            await utils.answer(message, self.strings["chat_not_found"].format(chat_id))
             return
 
         is_premium = emoji.isdigit()
