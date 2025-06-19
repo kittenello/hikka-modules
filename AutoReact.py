@@ -35,17 +35,6 @@ class AutoReactMod(loader.Module):
     async def client_ready(self, client, db):
         self._db = db
         self._client = client
-        self.active_chats = self.get("active_chats", {})
-
-    def get_active_chats(self):
-        return self.active_chats
-
-    def save_active_chats(self):
-        self.set("active_chats", self.active_chats)
-
-    async def client_ready(self, client, db):
-        self._db = db
-        self._client = client
 
         active_chats = self.get("active_chats")
 
@@ -54,6 +43,12 @@ class AutoReactMod(loader.Module):
             active_chats = {}
 
         self.active_chats = active_chats
+
+    def get_active_chats(self):
+        return self.active_chats
+
+    def save_active_chats(self):
+        self.set("active_chats", dict(self.active_chats))
 
     @loader.command(ru_doc="Добавить чат (по ID) для автореакции")
     async def auadd(self, message):
