@@ -104,12 +104,21 @@ class AutoReactMod(loader.Module):
 
     @loader.command(ru_doc="Показать список чатов с включёнными автореакциями")
     async def aulist(self, message):
+        if not isinstance(self.active_chats, dict):
+            await utils.answer(message, "<b>sbros</b>")
+            self.active_chats = {}
+            self.save_active_chats()
+            return
+
         if not self.active_chats:
             await utils.answer(message, "<b>Список чатов пуст.</b>")
             return
 
         output = self.strings["list_header"]
         for chat_id, data in self.active_chats.items():
+            if not isinstance(data, dict):
+                continue
+
             emoji = data.get("emoji", "?")
             is_premium = data.get("is_premium", False)
             title = data.get("title", f"Чат {chat_id}")
