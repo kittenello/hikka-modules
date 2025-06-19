@@ -3,7 +3,7 @@ from .. import loader, utils
 import logging
 
 logger = logging.getLogger(__name__)
-# meta developer: @kolyankid
+# meta developer: @PokaNikto
 
 @loader.tds
 class AutoReactMod(loader.Module):
@@ -11,17 +11,13 @@ class AutoReactMod(loader.Module):
         "name": "AutoReaction",
         "added": "✅ Добавлен чат {} для автореакции",
         "removed": "🚫 Удалён чат {} из автореакции",
-        "already_removed": "⚠️ Чат {} не находится в списке",
         "no_chat": "⚠️ Не удалось найти чат с ID {}",
         "reaction_set": "✅ Установлена реакция: {}",
         "premium_set": "✅ Установлена Premium реакция по ID: {}",
         "no_reaction": "⚠️ Укажите эмодзи или его ID для реакции",
         "list_header": "<b>Список чатов с включённой автореакцией:</b>\n\n",
-        "list_item": "▫️ <b>{} [ID: </b><code>{}</code><b>]</b> - {} {}\n",
-        "premium_tag": "[Premium ID: {}]",
-        "invalid_id": "⚠️ Неверный формат ID чата: {}",
-        "chat_not_found": "⚠️ Чат с ID {} не найден в списке.",
-        "reaction_updated": "✅ Реакция для чата {} изменена."
+        "list_item": "▫️ <b>{} [ID: {}]</b> - {} {}\n",
+        "premium_tag": "[Premium ID: {}]"
     }
 
     def __init__(self):
@@ -45,21 +41,18 @@ class AutoReactMod(loader.Module):
     def save_active_chats(self):
         self.set("active_chats", self.active_chats)
 
-    @loader.command(ru_doc="Добавить чат (по ID) для автореакции")
+    @loader.command(ru_doc="Добавить/удалить чат (по ID) для автореакции")
     async def auadd(self, message):
         args = utils.get_args_raw(message)
         if not args:
             await utils.answer(message, "<b>Укажите ID чата.</b>")
             return
 
-        chat_ids = args.split()
-        output = []
-
-        for chat_id in chat_ids:
-            if chat_id in self.active_chats:
-                output.append(self.strings["already_removed"].format(chat_id))
-                continue
-
+        chat_id = args.strip()
+        if chat_id in self.active_chats:
+            del self.active_chats[chat_id]
+            status = False
+        else:
             try:
                 chat_entity = await self._client.get_entity(int(chat_id))
                 title = chat_entity.title
@@ -68,34 +61,15 @@ class AutoReactMod(loader.Module):
                     "is_premium": self.config["is_premium"],
                     "title": title
                 }
-                output.append(self.strings["added"].format(title))
+                status = True
             except ValueError:
-                output.append(self.strings["no_chat"].format(chat_id))
+                await utils.answer(message, self.strings["no_chat"].format(chat_id))
+                return
 
         self.save_active_chats()
-        await utils.answer(message, "\n".join(output))
 
-    @loader.command(ru_doc="Удалить чат (по ID) из автореакции")
-    async def aurem(self, message):
-        args = utils.get_args_raw(message)
-        if not args:
-            await utils.answer(message, "<b>Укажите ID чата для удаления.</b>")
-            return
-
-        chat_ids = args.split()
-        output = []
-
-        for chat_id in chat_ids:
-            if chat_id not in self.active_chats:
-                output.append(self.strings["already_removed"].format(chat_id))
-                continue
-
-            title = self.active_chats[chat_id].get("title", f"Чат {chat_id}")
-            del self.active_chats[chat_id]
-            output.append(self.strings["removed"].format(title))
-
-        self.save_active_chats()
-        await utils.answer(message, "\n".join(output))
+        response = self.strings["added"].format(title) if status else self.strings["removed"].format(chat_id)
+        await utils.answer(message, response)
 
     @loader.command(ru_doc="Показать список чатов с включёнными автореакциями")
     async def aulist(self, message):
@@ -113,15 +87,15 @@ class AutoReactMod(loader.Module):
 
         await utils.answer(message, output)
 
-    @loader.command(ru_doc="Установить реакцию всем чатам")
-    async def setrс(self, message):
+    @loader.command(ru_doc="Установить реакцию (обычный эмодзи или ID для Premium)")
+    async def setr(self, message):
         args = utils.get_args_raw(message)
         if not args:
             await utils.answer(message, self.strings["no_reaction"])
             return
 
         is_premium = args.isdigit()
-        
+
         for chat in self.active_chats.values():
             chat["emoji"] = args
             chat["is_premium"] = is_premium
