@@ -3,7 +3,7 @@ from .. import loader, utils
 import logging
 
 logger = logging.getLogger(__name__)
-# meta developer: @XenSideMOD
+# meta developer: @kolyankid
 
 @loader.tds
 class AutoReactMod(loader.Module):
@@ -42,6 +42,18 @@ class AutoReactMod(loader.Module):
 
     def save_active_chats(self):
         self.set("active_chats", self.active_chats)
+
+    async def client_ready(self, client, db):
+        self._db = db
+        self._client = client
+
+        active_chats = self.get("active_chats")
+
+        if not isinstance(active_chats, dict):
+            logger.warning("брат чето у тебя бом бом ща кароч восстановим")
+            active_chats = {}
+
+        self.active_chats = active_chats
 
     @loader.command(ru_doc="Добавить чат (по ID) для автореакции")
     async def auadd(self, message):
