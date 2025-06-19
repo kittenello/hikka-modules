@@ -20,7 +20,6 @@ class AutoReactMod(loader.Module):
         "list_item": "▫️ <b>{} [ID: </b><code>{}</code><b>]</b> - {} {}\n",
         "premium_tag": "[Premium ID: {}]",
         "invalid_id": "⚠️ Неверный формат ID чата: {}",
-        "usage_setrc": "⚠️ Использование: .setrc <ID_чата> <эмодзи или ID_реакции>",
         "chat_not_found": "⚠️ Чат с ID {} не найден в списке.",
         "reaction_updated": "✅ Реакция для чата {} изменена."
     }
@@ -45,6 +44,36 @@ class AutoReactMod(loader.Module):
 
     def save_active_chats(self):
         self.set("active_chats", self.active_chats)
+
+    @loader.command(ru_doc="Добавить чат (по ID) для автореакции")
+    async def auadd(self, message):
+        args = utils.get_args_raw(message)
+        if not args:
+            await utils.answer(message, "<b>Укажите ID чата.</b>")
+            return
+
+        chat_ids = args.split()
+        output = []
+
+        for chat_id in chat_ids:
+            if chat_id in self.active_chats:
+                output.append(self.strings["already_removed"].format(chat_id))
+                continue
+
+            try:
+                chat_entity = await self._client.get_entity(int(chat_id))
+                title = chat_entity.title
+                self.active_chats[chat_id] = {
+                    "emoji": self.config["current_reaction"],
+                    "is_premium": self.config["is_premium"],
+                    "title": title
+                }
+                output.append(self.strings["added"].format(title))
+            except ValueError:
+                output.append(self.strings["no_chat"].format(chat_id))
+
+        self.save_active_chats()
+        await utils.answer(message, "\n".join(output))
 
     @loader.command(ru_doc="Удалить чат (по ID) из автореакции")
     async def aurem(self, message):
@@ -84,36 +113,15 @@ class AutoReactMod(loader.Module):
 
         await utils.answer(message, output)
 
-    @loader.command(ru_doc="Установить реакцию для определённого чата: .setrc <ID> <эмодзи или ID>")
-    async def setrc(self, message):
-        args = utils.get_args_raw(message).split(maxsplit=1)
-        if len(args) != 2:
-            await utils.answer(message, self.strings["usage_setrc"])
-            return
-
-        chat_id, emoji = args
-        if chat_id not in self.active_chats:
-            await utils.answer(message, self.strings["chat_not_found"].format(chat_id))
-            return
-
-        is_premium = emoji.isdigit()
-
-        self.active_chats[chat_id]["emoji"] = emoji
-        self.active_chats[chat_id]["is_premium"] = is_premium
-        self.save_active_chats()
-
-        title = self.active_chats[chat_id]["title"]
-        await utils.answer(message, self.strings["reaction_updated"].format(title))
-
     @loader.command(ru_doc="Установить реакцию всем чатам")
-    async def setr(self, message):
+    async def setrс(self, message):
         args = utils.get_args_raw(message)
         if not args:
             await utils.answer(message, self.strings["no_reaction"])
             return
 
         is_premium = args.isdigit()
-
+        
         for chat in self.active_chats.values():
             chat["emoji"] = args
             chat["is_premium"] = is_premium
