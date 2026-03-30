@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 @loader.tds
 class AutoComment(loader.Module):
-    """Умные автокомментарии: анализирует пост, ищет требуемое слово, пропускает кнопки/таймеры."""
+    """Умные автокомментарии: улучшенная детекция, отправка в комментарии."""
     
     strings = {
         "name": "AutoComment",
@@ -31,7 +31,7 @@ class AutoComment(loader.Module):
         "cfg_skip_buttons": "Пропускать посты с кнопками? (да/нет)",
         "cfg_skip_timers": "Пропускать посты с таймером итогов? (да/нет)",
         
-        "start_watch": "✅ <b>🟢 AutoComment v3 запущен</b>\n📺 Канал: {channel}\n🔑 Триггеры: {keywords}\n💬 Рандом: {comments}\n🔍 Проверка через: {check_delay}с\n🔔 Уведомления: {notify}\n🚫 Пропуск кнопок: {skip_btn}\n🚫 Пропуск таймеров: {skip_timer}",
+        "start_watch": "✅ <b>🟢 AutoComment v3.1 запущен</b>\n📺 Канал: {channel}\n🔑 Триггеры: {keywords}\n💬 Рандом: {comments}\n🔍 Проверка через: {check_delay}с\n🔔 Уведомления: {notify}\n🚫 Пропуск кнопок: {skip_btn}\n🚫 Пропуск таймеров: {skip_timer}",
         "stop_watch": "🛑 <b>🔴 Мониторинг остановлен</b>",
         
         "keyword_found": "🔍 <b>Триггер найден!</b>\n📝 Пост #{post_id}\n🔑 Совпадение: {matched}",
@@ -57,8 +57,8 @@ class AutoComment(loader.Module):
     def __init__(self):
         self.config = loader.ModuleConfig(
             loader.ConfigValue("channel_id", "", lambda: self.strings["cfg_channel_id"]),
-            loader.ConfigValue("keywords", "первые,коммент,подарок,ракета,мишка,раздача,дроп,напиш", lambda: self.strings["cfg_keywords"]),
-            loader.ConfigValue("comments", "изи|я|забрал|тут|моё|го|взял", lambda: self.strings["cfg_comments"]),
+            loader.ConfigValue("keywords", "первые,коммент,подарок,ракета,мишка,раздача,дроп,напиш,комментируйте,комы,получат,100,111,101,50,20,30", lambda: self.strings["cfg_keywords"]),
+            loader.ConfigValue("comments", "изи|я|забрал|тут|моё|го|взял|комы где", lambda: self.strings["cfg_comments"]),
             loader.ConfigValue("notify_chat", "0", lambda: self.strings["cfg_notify_chat"]),
             loader.ConfigValue("check_delay", "2", lambda: self.strings["cfg_check_delay"], 
                               validator=loader.validators.Integer(minimum=0, maximum=30)),
@@ -98,11 +98,41 @@ class AutoComment(loader.Module):
         return [c.strip() for c in raw.split("|") if c.strip()] if raw else ["изи"]
 
     def _check_keywords(self, text: str) -> list:
+        """Улучшенная проверка на триггеры с учетом вариаций"""
         if not text:
             return []
         text_lower = text.lower()
-        keywords = self._parse_keywords()
-        return [kw for kw in keywords if kw in text_lower]
+        
+        # Основные триггеры из конфига
+        config_keywords = self._parse_keywords()
+        
+        # Дополнительные паттерны для раздач
+        giveaway_patterns = [
+            r'\d+\s*первых\s*(коммент|комментариев|комов)',  # "100 первых комментов"
+            r'первые\s+\d+\s*(коммент|комментариев|комов)',  # "первые 100 комментов"
+            r'получат\s+по\s+\w+',  # "получат по мишке/ракете"
+            r'\d+\s*первых\s+получат',  # "100 первых получат"
+            r'комментируйте\s+ниже',  # "комментируйте внизу"
+            r'комы\s+где',  # "комы где"
+            r'сообщения\s+бесплатн',  # "сообщения бесплатные"
+            r'подарок\s+коммент',  # "подарок коммент"
+            r'оставляйте\s+коммент',  # "оставляйте коммент"
+        ]
+        
+        matched = []
+        
+        # Проверяем конфиг keywords
+        for keyword in config_keywords:
+            if keyword in text_lower:
+                matched.append(keyword)
+        
+        # Проверяем паттерны
+        for pattern in giveaway_patterns:
+            if re.search(pattern, text_lower):
+                match = re.search(pattern, text_lower)
+                matched.append(f"pattern:{match.group(0)}")
+        
+        return matched
 
     def _has_buttons(self, message: Message) -> bool:
         """Проверяет, есть ли под постом кнопки (inline keyboard)"""
@@ -132,79 +162,58 @@ class AutoComment(loader.Module):
         return False
 
     def _extract_required_word(self, text: str) -> str:
-        """
-        Извлекает требуемое слово для комментария из текста поста.
-        Примеры:
-        - "напишет 'матадора'" → "матадора"
-        - "напишут слово 'привет'" → "привет"
-        - "кто напишет 'токен'" → "токен"
-        """
+        """Извлекает требуемое слово для комментария из текста поста."""
         if not text:
             return None
         
         patterns = [
-            r'напиш[еиу][тс]?[\s:]+["\']([^"\']+)["\']',  # напишет "слово" или 'слово'
-            r'напиш[еиу][тс]?[\s:]+([а-яa-z]{3,})',  # напишет слово (без кавычек)
-            r'коммент\s+["\']([^"\']+)["\']',  # коммент "слово"
-            r'сообщение\s+["\']([^"\']+)["\']',  # сообщение "слово"
-            r'слово\s+["\']([^"\']+)["\']',  # слово "слово"
-            r'текст\s+["\']([^"\']+)["\']',  # текст "слово"
+            r'напиш[еиу][тс]?[\s:]+["\']([^"\']+)["\']',
+            r'напиш[еиу][тс]?[\s:]+([а-яa-z]{3,})',
+            r'коммент\s+["\']([^"\']+)["\']',
+            r'сообщение\s+["\']([^"\']+)["\']',
+            r'слово\s+["\']([^"\']+)["\']',
+            r'текст\s+["\']([^"\']+)["\']',
         ]
         
         for pattern in patterns:
             match = re.search(pattern, text.lower())
             if match:
                 word = match.group(1).strip()
-                # Фильтруем слишком короткие или длинные слова
                 if 2 <= len(word) <= 30:
                     return word
         
         return None
 
     def _should_skip_post(self, message: Message, text: str) -> tuple[bool, str]:
-        """
-        Проверяет, нужно ли пропустить пост.
-        Возвращает: (skip: bool, reason: str)
-        """
-        # Проверка кнопок
+        """Проверяет, нужно ли пропустить пост."""
         if self.config["skip_buttons"] == "да" and self._has_buttons(message):
             return True, "button"
         
-        # Проверка таймеров
         if self.config["skip_timers"] == "да" and self._has_timer_text(text):
             return True, "timer"
         
-        # Проверка на закрытые комментарии (нет поля для комментов)
-        if hasattr(message, 'reply_to') and message.reply_to:
-            if hasattr(message.reply_to, 'forum_topic') and message.reply_to.forum_topic:
-                pass  # Это топик, нормально
-        
         return False, ""
 
-    def _get_comment_text(self, post_text: str) -> str:
-        """
-        Определяет, какой комментарий отправить.
-        1. Если найдено требуемое слово в посте → используем его
-        2. Иначе → рандом из списка
-        """
-        # Пытаемся найти требуемое слово
+    def _get_comment_text(self, post_text: str) -> tuple[str, bool]:
+        """Определяет, какой комментарий отправить."""
         required_word = self._extract_required_word(post_text)
         if required_word:
             logger.info(f"Required word found: {required_word}")
-            return required_word, True  # True = найдено требуемое
+            return required_word, True
         
-        # Рандомный комментарий
         comments = self._parse_comments()
         random_comment = random.choice(comments)
         logger.info(f"Random comment: {random_comment}")
-        return random_comment, False  # False = рандом
+        return random_comment, False
 
-    async def _get_my_comment_position(self, post: Message, my_message_id: int) -> tuple[bool, int]:
+    async def _get_my_comment_position(self, post: Message, my_message_id: int, comment_target=None) -> tuple[bool, int]:
         """Проверяет позицию нашего комментария"""
         try:
+            target = comment_target if comment_target else post.peer_id
+            
             comments = []
             async for comment in self.client.iter_messages(
-                post.peer_id, 
+                target, 
                 reply_to=post.id, 
                 limit=50
             ):
@@ -243,7 +252,7 @@ class AutoComment(loader.Module):
         self.stats["processed"] += 1
         text = post.text or ""
         
-        # Проверка на триггеры
+        # Улучшенная проверка на триггеры
         matched = self._check_keywords(text)
         if not matched:
             self._save_state()
@@ -273,9 +282,24 @@ class AutoComment(loader.Module):
         comment_text, is_required = self._get_comment_text(text)
         
         try:
+            # 🔍 Ищем группу для комментариев (discussion group)
+            comment_target = post.peer_id
+            
+            # Проверяем, есть ли у канала привязанная группа
+            try:
+                if hasattr(post, 'chat') and post.chat:
+                    channel = await self.client.get_entity(post.chat_id)
+                    if hasattr(channel, 'discussion'):
+                        discussion = channel.discussion
+                        if discussion:
+                            comment_target = discussion
+                            logger.info(f"Found discussion group: {discussion.id}")
+            except Exception as e:
+                logger.debug(f"Error getting discussion: {e}")
+            
             # 📝 Отправляем комментарий
             sent_msg = await self.client.send_message(
-                post.peer_id,
+                comment_target,
                 comment_text,
                 reply_to=post.id
             )
@@ -286,7 +310,7 @@ class AutoComment(loader.Module):
             self.stats["sent"] += 1
             self._save_state()
             
-            logger.info(f"Comment sent: '{comment_text}' (required: {is_required})")
+            logger.info(f"Comment sent to {comment_target}: '{comment_text}' (required: {is_required})")
             
             # ⏳ Ждём перед проверкой
             check_delay = self.config["check_delay"]
@@ -294,14 +318,13 @@ class AutoComment(loader.Module):
                 await asyncio.sleep(check_delay)
             
             # 🔍 Проверяем позицию
-            is_first, position = await self._get_my_comment_position(post, sent_msg.id)
+            is_first, position = await self._get_my_comment_position(post, sent_msg.id, comment_target)
             
             # 🔔 Уведомление
             channel_title = getattr(post.chat, 'title', 'Unknown')
             post_link = f"https://t.me/c/{str(post.peer_id.channel_id).replace('-100', '')}/{post.id}" if hasattr(post.peer_id, 'channel_id') else f"https://t.me/{getattr(post.chat, 'username', '')}/{post.id}"
             time_now = datetime.now().strftime("%H:%M:%S")
             
-            # Добавляем инфо о типе комментария
             comment_type = "📋 Требуемое" if is_required else "🎲 Рандом"
             
             if is_first:
@@ -342,6 +365,7 @@ class AutoComment(loader.Module):
             return
         
         try:
+            # Исправление: проверяем тип перед вызовом lstrip()
             if isinstance(channel_id, str) and channel_id.lstrip('-').isdigit():
                 channel = await self.client.get_entity(int(channel_id))
             else:
@@ -357,7 +381,7 @@ class AutoComment(loader.Module):
                 async for post in self.client.iter_messages(channel, limit=5):
                     await self._process_post(post)
                 
-                await asyncio.sleep(8)  # проверка каждые 8 сек
+                await asyncio.sleep(8)
                 
             except asyncio.CancelledError:
                 break
@@ -411,7 +435,7 @@ class AutoComment(loader.Module):
         args = utils.get_args_raw(message).strip().split(maxsplit=1)
         if not args:
             text = (
-                "<b>⚙️ AutoComment v3 настройки</b>\n\n"
+                "<b>⚙️ AutoComment v3.1 настройки</b>\n\n"
                 f"📺 <b>Канал:</b> <code>{self.config['channel_id']}</code>\n"
                 f"🔑 <b>Триггеры:</b> <code>{self.config['keywords']}</code>\n"
                 f"💬 <b>Рандом:</b> <code>{self.config['comments']}</code>\n"
