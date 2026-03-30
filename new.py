@@ -317,14 +317,27 @@ class AutoComment(loader.Module):
             # 🔍 Ищем discussion group (группу для комментариев)
             comment_target = await self._find_discussion_group(post.chat)
             
-            # Если не нашли discussion, используем peer_id поста
+            # Если не нашли discussion - ПРОПУСКАЕМ этот пост
             if not comment_target:
-                comment_target = post.peer_id
-                logger.warning(f"Discussion not found, using: {comment_target}")
-            else:
-                logger.info(f"Found discussion group: {comment_target}")
+                logger.warning(f"⚠️ Discussion group NOT FOUND for post {post.id}. Skipping!")
+                self.stats["skipped"] += 1
+                self._save_state()
+                # Пробуем отправить уведомление что discussion не найдена
+                try:
+                    await self._send_notify(
+                        f"⚠️ <b>Пропущен пост!</b>\n"
+                        f"📺 Канал: {getattr(post.chat, 'title', 'Unknown')}\n"
+                        f"🔗 Пост: {post.id}\n"
+                        f"❌ Discussion group не найдена!",
+                        self.config["notify_chat"]
+                    )
+                except Exception:
+                    pass
+                return
             
-            # 📝 Отправляем комментарий В ОБСУЖДЕНИЕ
+            logger.info(f"✅ Found discussion: {comment_target}")
+            
+            # 📝 Отправляем комментарий ТОЛЬКО в discussion group
             sent_msg = await self.client.send_message(
                 comment_target,
                 comment_text,
@@ -337,16 +350,15 @@ class AutoComment(loader.Module):
             self.stats["sent"] += 1
             self._save_state()
             
-            logger.info(f"✅ Comment sent to {comment_target}: '{comment_text}' (required: {is_required})")
+            logger.info(f"✅ Comment sent to discussion {comment_target}: '{comment_text}'")
             
-            # 🔔 Уведомление СРАЗУ (без проверки позиции!)
+            # 🔔 Уведомление
             channel_title = getattr(post.chat, 'title', 'Unknown')
             post_link = f"https://t.me/c/{str(post.peer_id.channel_id).replace('-100', '')}/{post.id}" if hasattr(post.peer_id, 'channel_id') else f"https://t.me/{getattr(post.chat, 'username', '')}/{post.id}"
             time_now = datetime.now().strftime("%H:%M:%S")
             
             comment_type = "📋 Требуемое" if is_required else "🎲 Рандом"
             
-            # Простое уведомление — написал и всё
             notify_msg = (
                 f"✅ <b>Комментарий отправлен!</b>\n"
                 f"📺 {channel_title}\n"
@@ -358,18 +370,23 @@ class AutoComment(loader.Module):
             
             await self._send_notify(notify_msg, self.config["notify_chat"])
             
-            # ✅ Всё! Больше не трогаем этот пост, ждём следующий
-            
         except errors.FloodWaitError as e:
             logger.warning(f"FloodWait: wait {e.seconds}s")
             await asyncio.sleep(e.seconds + 5)
         except Exception as e:
             logger.error(f"Error: {e}")
-            await self._send_notify(f"❌ Ошибка: {e}", self.config["notify_chat"])
+            try:
+                await self._send_notify(f"❌ Ошибка: {e}", self.config["notify_chat"])
+            except Exception:
+                pass
 
     async def _send_notify(self, message: str, chat_id: str = None):
         try:
-            target = int(chat_id) if chat_id and chat_id != "0" else await self.client.get_me()
+            if chat_id == "0" or not chat_id:
+                target = "me"
+            else:
+                target = int(chat_id)
+            
             await self.client.send_message(target, message, parse_mode="html", link_preview=False)
         except Exception as e:
             logger.error(f"Notify error: {e}")
