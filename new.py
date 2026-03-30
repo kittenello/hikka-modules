@@ -5,6 +5,7 @@ __version__ = ("1", "0", "6")
 
 # meta developer: @pendulation
 
+
 import asyncio
 import logging
 import re
@@ -21,7 +22,7 @@ logging.getLogger('telethon').setLevel(logging.WARNING)
 
 @loader.tds
 class AutoComment(loader.Module):
-    """Умные автокомментарии: ИСПРАВЛЕНО - только комментарии!"""
+    """Умные автокомментарии: ТОЛЬКО комментарии, БЕЗ дублей!"""
     
     strings = {
         "name": "AutoComment",
@@ -34,7 +35,7 @@ class AutoComment(loader.Module):
         "cfg_skip_buttons": "Пропускать кнопки? (да/нет)",
         "cfg_skip_timers": "Пропускать таймеры? (да/нет)",
         
-        "start_watch": "✅ <b>🟢 AutoComment v3.4 ЗАПУЩЕН</b>\n📺 Канал: {channel}\n🔑 Триггеры: {keywords}\n💬 Рандом: {comments}\n🔔 Уведомления: {notify}\n📌 <b>Только новые посты!</b>",
+        "start_watch": "✅ <b>🟢 AutoComment v3.5 ЗАПУЩЕН</b>\n📺 Канал: {channel}\n🔑 Триггеры: {keywords}\n💬 Рандом: {comments}\n🔔 Уведомления: {notify}\n📌 <b>Только новые посты! Только комментарии!</b>",
         "stop_watch": "🛑 <b>🔴 Остановлен</b>",
         
         "skip_button": "⏭ Пропущено: кнопки",
@@ -195,40 +196,44 @@ class AutoComment(loader.Module):
         return random_comment, False
 
     async def _find_discussion_group(self, channel):
-        """Ищет discussion group для канала"""
+        """Ищет discussion group — ИСПРАВЛЕНО"""
+        logger.info(f"🔍 Ищем discussion для канала {channel.id}")
+        
         try:
-            # Проверяем discussion в канале
+            # 1. Проверяем channel.discussion
             if hasattr(channel, 'discussion') and channel.discussion:
-                logger.info(f"Found discussion via channel.discussion: {channel.discussion}")
+                logger.info(f"✅ Найдено через channel.discussion: {channel.discussion}")
                 return channel.discussion
             
-            # Получаем полную информацию о канале
+            # 2. GetFullChannel
             try:
                 full_channel = await self.client(functions.channels.GetFullChannelRequest(channel))
                 if full_channel and hasattr(full_channel, 'full_chat'):
                     if hasattr(full_channel.full_chat, 'linked_chat_id'):
                         linked_id = full_channel.full_chat.linked_chat_id
-                        if linked_id:
-                            logger.info(f"Found discussion via linked_chat_id: {linked_id}")
+                        if linked_id and linked_id != channel.id:
+                            logger.info(f"✅ Найдено через linked_chat_id: {linked_id}")
                             return linked_id
             except Exception as e:
                 logger.debug(f"GetFullChannel error: {e}")
             
-            # Ищем среди диалогов
+            # 3. Ищем среди диалогов
+            logger.info("🔍 Ищем в диалогах...")
             async for dialog in self.client.iter_dialogs():
                 if hasattr(dialog, 'is_group') and dialog.is_group:
                     try:
                         full_chat = await self.client(functions.messages.GetFullChatRequest(dialog.id))
                         if hasattr(full_chat, 'full_chat') and hasattr(full_chat.full_chat, 'linked_chat_id'):
                             if full_chat.full_chat.linked_chat_id == channel.id:
-                                logger.info(f"Found discussion via dialog search: {dialog.id}")
+                                logger.info(f"✅ Найдено в диалогах: {dialog.id}")
                                 return dialog.id
-                    except Exception:
+                    except:
                         continue
             
         except Exception as e:
             logger.error(f"Error finding discussion: {e}")
         
+        logger.warning(f"❌ Discussion НЕ найдена для канала {channel.id}")
         return None
 
     async def _send_notify(self, message: str, chat_id: str = None):
@@ -246,81 +251,105 @@ class AutoComment(loader.Module):
             logger.error(f"Notify error: {e}")
 
     async def _process_post(self, post: Message):
-        """ИСПРАВЛЕНО: только комментарии в discussion!"""
+        """ИСПРАВЛЕНО: ТОЛЬКО комментарии, БЕЗ дублей!"""
+        
+        # ✅ ПРОВЕРКА 1: Уже обработан?
         if post.id in self.processed_posts:
+            logger.info(f"⏭ Post {post.id} уже обработан, пропускаем")
             return
         
-        # Только новые посты
+        # ✅ ПРОВЕРКА 2: Старый пост (до запуска)?
         if self._is_old_post(post):
+            logger.debug(f"⏭ Post {post.id} старый (до запуска)")
             self.stats["skipped"] += 1
             self._save_state()
             return
         
+        # ✅ ПРОВЕРКА 3: Сервисное сообщение или нет текста?
         if isinstance(post, types.MessageService) or not post.text:
             return
         
         self.stats["processed"] += 1
         text = post.text or ""
         
+        # ✅ ПРОВЕРКА 4: Есть триггеры?
         matched = self._check_keywords(text)
         if not matched:
             self._save_state()
             return
         
+        logger.info(f"🔍 Post {post.id}: найдены триггеры {matched}")
+        
+        # ✅ ПРОВЕРКА 5: Кнопки/таймеры?
         should_skip, skip_reason = self._should_skip_post(post, text)
         if should_skip:
+            logger.info(f"⏭ Post {post.id} пропущен: {skip_reason}")
             self.stats["skipped"] += 1
             self._save_state()
             return
         
-        # Кулдаун
+        # ✅ ПРОВЕРКА 6: Кулдаун
         now = datetime.now().timestamp()
         cooldown_sec = self.config["cooldown"] * 60
         if now - self.last_comment_time < cooldown_sec:
             remaining = int(cooldown_sec - (now - self.last_comment_time))
-            logger.info(f"Rate limit: {remaining}s")
+            logger.info(f"⏳ Кулдаун: ждем {remaining}s")
             self._save_state()
             return
         
+        # Получаем текст комментария
         comment_text, is_required = self._get_comment_text(text)
+        logger.info(f"📝 Comment text: '{comment_text}' (required: {is_required})")
         
         try:
-            # Ищем discussion group
+            # 🔍 Ищем discussion group
             discussion_id = await self._find_discussion_group(post.chat)
             
+            # ❌ НЕТ DISCUSSION — ПРОПУСКАЕМ!
             if not discussion_id:
-                logger.warning(f"NO DISCUSSION FOUND for post {post.id}")
+                logger.error(f"❌ Post {post.id}: НЕТ DISCUSSION GROUP!")
                 self.stats["skipped"] += 1
                 self._save_state()
-                # Уведомляем что discussion не найдена
+                
+                # Уведомляем
                 try:
                     await self._send_notify(
-                        f"⚠️ <b>НЕТ DISCUSSION!</b>\n"
+                        f"❌ <b>НЕТ DISCUSSION!</b>\n"
                         f"📺 {getattr(post.chat, 'title', 'Unknown')}\n"
                         f"🔗 Пост: {post.id}\n"
-                        f"❌ Создайте discussion в настройках канала!",
+                        f"⚠️ Создайте discussion в настройках канала!",
                         self.config["notify_chat"]
                     )
-                except Exception:
+                except:
                     pass
                 return
             
-            logger.info(f"✅ Sending comment to discussion {discussion_id} for post {post.id}")
+            logger.info(f"✅ Post {post.id}: discussion_id = {discussion_id}")
             
-            # ОТПРАВЛЯЕМ КОММЕНТАРИЙ В DISCUSSION (не в канал!)
-            await self.client.send_message(
-                discussion_id,
+            # 🔥 ВАЖНО: Проверяем что discussion_id != channel_id
+            channel_id = post.chat_id
+            if discussion_id == channel_id:
+                logger.error(f"❌ discussion_id == channel_id! Это канал, не discussion!")
+                self.stats["skipped"] += 1
+                self._save_state()
+                return
+            
+            # 📝 ОТПРАВКА КОММЕНТАРИЯ (ОДИН РАЗ!)
+            logger.info(f"📤 Отправляем комментарий в discussion {discussion_id}, reply_to={post.id}")
+            
+            sent_msg = await self.client.send_message(
+                discussion_id,        # ТОЛЬКО discussion!
                 comment_text,
-                reply_to=post.id
+                reply_to=post.id      # Это создаст комментарий к посту
             )
             
-            # Помечаем как обработанный
+            logger.info(f"✅ Комментарий отправлен! ID: {sent_msg.id}")
+            
+            # ✅ Помечаем как обработанный (ЧТОБЫ НЕ БЫЛО ДУБЛЕЙ!)
             self.last_comment_time = now
-            self.processed_posts.add(post.id)
+            self.processed_posts.add(post.id)  # 🔥 ВАЖНО!
             self.stats["sent"] += 1
             self._save_state()
-            
-            logger.info(f"✅ Comment sent: '{comment_text}'")
             
             # Уведомление
             channel_title = getattr(post.chat, 'title', 'Unknown')
@@ -351,10 +380,12 @@ class AutoComment(loader.Module):
             logger.warning(f"FloodWait: {e.seconds}s")
             await asyncio.sleep(e.seconds + 5)
         except Exception as e:
-            logger.error(f"Error: {e}")
+            logger.error(f"❌ Error processing post {post.id}: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             try:
                 await self._send_notify(f"❌ Ошибка: {e}", self.config["notify_chat"])
-            except Exception:
+            except:
                 pass
 
     async def _watch_loop(self):
@@ -461,7 +492,7 @@ class AutoComment(loader.Module):
         args = utils.get_args_raw(message).strip().split(maxsplit=1)
         if not args:
             text = (
-                f"<b>⚙️ AutoComment v3.4</b>\n\n"
+                f"<b>⚙️ AutoComment v3.5</b>\n\n"
                 f"📺 <b>Канал:</b> <code>{self.config['channel_id']}</code>\n"
                 f"🔑 <b>Триггеры:</b> <code>{self.config['keywords']}</code>\n"
                 f"💬 <b>Рандом:</b> <code>{self.config['comments']}</code>\n"
