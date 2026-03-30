@@ -1,17 +1,9 @@
-#  This file is part of SenkoGuardianModules
-#  Copyright (c) 2025 Senko
-#  This software is released under the MIT License.
-#  https://opensource.org/licenses/MIT
 
 # scope heroku_min: 2.0.0
-# meta banner: https://raw.githubusercontent.com/SenkoGuardian/SenkoGuardian.github.io/main/OfficialSenkoGuardianBanner.png
-# meta pic: https://raw.githubusercontent.com/SenkoGuardian/SenkoGuardian.github.io/main/OfficialSenkoGuardianBanner.png
 
 __version__ = ("1", "0", "2")
 
-"""￣へ￣"""
-
-# meta developer: @SenkoGuardianModules
+# meta developer: @pendulation
 
 import asyncio
 import logging
@@ -350,9 +342,10 @@ class AutoComment(loader.Module):
             return
         
         try:
-            channel = await self.client.get_entity(
-                int(channel_id) if channel_id.lstrip('-').isdigit() else channel_id
-            )
+            if isinstance(channel_id, str) and channel_id.lstrip('-').isdigit():
+                channel = await self.client.get_entity(int(channel_id))
+            else:
+                channel = await self.client.get_entity(channel_id)
         except Exception as e:
             logger.error(f"Can't get channel: {e}")
             return
@@ -383,7 +376,7 @@ class AutoComment(loader.Module):
     async def acstart(self, message: Message):
         """[channel_id] — Запустить мониторинг"""
         args = utils.get_args_raw(message).strip()
-        if args and args.lstrip('-').isdigit():
+        if args and isinstance(args, str) and args.lstrip('-').isdigit():
             self.config["channel_id"] = args
         
         if not self.config["channel_id"]:
