@@ -1,7 +1,7 @@
 
 # scope heroku_min: 2.0.0
 
-__version__ = ("1", "0", "2")
+__version__ = ("1", "0", "4")
 
 # meta developer: @pendulation
 
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 @loader.tds
 class AutoComment(loader.Module):
-    """Умные автокомментарии: улучшенная детекция, отправка в комментарии."""
+    """Умные автокомментарии: только новые посты после запуска."""
     
     strings = {
         "name": "AutoComment",
@@ -31,7 +31,7 @@ class AutoComment(loader.Module):
         "cfg_skip_buttons": "Пропускать посты с кнопками? (да/нет)",
         "cfg_skip_timers": "Пропускать посты с таймером итогов? (да/нет)",
         
-        "start_watch": "✅ <b>🟢 AutoComment v3.1 запущен</b>\n📺 Канал: {channel}\n🔑 Триггеры: {keywords}\n💬 Рандом: {comments}\n🔍 Проверка через: {check_delay}с\n🔔 Уведомления: {notify}\n🚫 Пропуск кнопок: {skip_btn}\n🚫 Пропуск таймеров: {skip_timer}",
+        "start_watch": "✅ <b>🟢 AutoComment v3.2 запущен</b>\n📺 Канал: {channel}\n🔑 Триггеры: {keywords}\n💬 Рандом: {comments}\n🔍 Проверка через: {check_delay}с\n🔔 Уведомления: {notify}\n🚫 Пропуск кнопок: {skip_btn}\n🚫 Пропуск таймеров: {skip_timer}\n📌 <b>Только новые посты!</b>",
         "stop_watch": "🛑 <b>🔴 Мониторинг остановлен</b>",
         
         "keyword_found": "🔍 <b>Триггер найден!</b>\n📝 Пост #{post_id}\n🔑 Совпадение: {matched}",
@@ -45,6 +45,7 @@ class AutoComment(loader.Module):
         
         "skip_button": "⏭ <b>Пропущено:</b> пост с кнопками",
         "skip_timer": "⏭ <b>Пропущено:</b> пост с таймером итогов",
+        "skip_old_post": "⏭ <b>Пропущено:</b> старый пост (до запуска)",
         "skip_no_comments": "⏭ <b>Пропущено:</b> комментарии закрыты",
         
         "error_send": "❌ Ошибка отправки: {error}",
@@ -74,6 +75,8 @@ class AutoComment(loader.Module):
         self.processed_posts = set()
         self.stats = {"processed": 0, "sent": 0, "skipped": 0}
         self._watch_task = None
+        self.watch_start_time = None
+        self.watch_start_post_id = None
 
     async def client_ready(self, client, db):
         self.client = client
@@ -81,6 +84,8 @@ class AutoComment(loader.Module):
         self.is_watching = self.db.get(self.__class__.__name__, "watching", False)
         self.processed_posts = set(self.db.get(self.__class__.__name__, "processed", []))
         self.stats = self.db.get(self.__class__.__name__, "stats", {"processed": 0, "sent": 0, "skipped": 0})
+        self.watch_start_time = self.db.get(self.__class__.__name__, "watch_start_time", None)
+        self.watch_start_post_id = self.db.get(self.__class__.__name__, "watch_start_post_id", None)
         if self.is_watching and self.config["channel_id"]:
             self._start_watch_internal()
 
@@ -88,6 +93,8 @@ class AutoComment(loader.Module):
         self.db.set(self.__class__.__name__, "watching", self.is_watching)
         self.db.set(self.__class__.__name__, "processed", list(self.processed_posts)[-1000:])
         self.db.set(self.__class__.__name__, "stats", self.stats)
+        self.db.set(self.__class__.__name__, "watch_start_time", self.watch_start_time)
+        self.db.set(self.__class__.__name__, "watch_start_post_id", self.watch_start_post_id)
 
     def _parse_keywords(self):
         raw = self.config["keywords"].strip()
@@ -103,30 +110,26 @@ class AutoComment(loader.Module):
             return []
         text_lower = text.lower()
         
-        # Основные триггеры из конфига
         config_keywords = self._parse_keywords()
         
-        # Дополнительные паттерны для раздач
         giveaway_patterns = [
-            r'\d+\s*первых\s*(коммент|комментариев|комов)',  # "100 первых комментов"
-            r'первые\s+\d+\s*(коммент|комментариев|комов)',  # "первые 100 комментов"
-            r'получат\s+по\s+\w+',  # "получат по мишке/ракете"
-            r'\d+\s*первых\s+получат',  # "100 первых получат"
-            r'комментируйте\s+ниже',  # "комментируйте внизу"
-            r'комы\s+где',  # "комы где"
-            r'сообщения\s+бесплатн',  # "сообщения бесплатные"
-            r'подарок\s+коммент',  # "подарок коммент"
-            r'оставляйте\s+коммент',  # "оставляйте коммент"
+            r'\d+\s*первых\s*(коммент|комментариев|комов)',
+            r'первые\s+\d+\s*(коммент|комментариев|комов)',
+            r'получат\s+по\s+\w+',
+            r'\d+\s*первых\s+получат',
+            r'комментируйте\s+ниже',
+            r'комы\s+где',
+            r'сообщения\s+бесплатн',
+            r'подарок\s+коммент',
+            r'оставляйте\s+коммент',
         ]
         
         matched = []
         
-        # Проверяем конфиг keywords
         for keyword in config_keywords:
             if keyword in text_lower:
                 matched.append(keyword)
         
-        # Проверяем паттерны
         for pattern in giveaway_patterns:
             if re.search(pattern, text_lower):
                 match = re.search(pattern, text_lower)
@@ -194,6 +197,26 @@ class AutoComment(loader.Module):
         
         return False, ""
 
+    def _is_old_post(self, message: Message) -> bool:
+        """Проверяет, был ли пост создан до запуска мониторинга"""
+        if not self.watch_start_time:
+            return False
+        
+        try:
+            # Сравниваем дату сообщения с временем запуска
+            if hasattr(message, 'date') and message.date:
+                msg_timestamp = message.date.timestamp()
+                if msg_timestamp < self.watch_start_time:
+                    return True
+        except Exception:
+            pass
+        
+        # Также проверяем по ID поста (если известно)
+        if self.watch_start_post_id and message.id < self.watch_start_post_id:
+            return True
+        
+        return False
+
     def _get_comment_text(self, post_text: str) -> tuple[str, bool]:
         """Определяет, какой комментарий отправить."""
         required_word = self._extract_required_word(post_text)
@@ -246,19 +269,24 @@ class AutoComment(loader.Module):
         if post.id in self.processed_posts:
             return
         
+        # 🔴 ПРОВЕРКА: только новые посты после запуска
+        if self._is_old_post(post):
+            self.stats["skipped"] += 1
+            self._save_state()
+            logger.debug(f"Skip old post {post.id} (before watch start)")
+            return
+        
         if isinstance(post, types.MessageService) or not post.text:
             return
         
         self.stats["processed"] += 1
         text = post.text or ""
         
-        # Улучшенная проверка на триггеры
         matched = self._check_keywords(text)
         if not matched:
             self._save_state()
             return
         
-        # Проверка на пропуск (кнопки, таймеры)
         should_skip, skip_reason = self._should_skip_post(post, text)
         if should_skip:
             self.stats["skipped"] += 1
@@ -269,7 +297,6 @@ class AutoComment(loader.Module):
                 logger.info(f"Skip post {post.id}: timer detected")
             return
         
-        # Проверка кулдауна
         now = datetime.now().timestamp()
         cooldown_sec = self.config["cooldown"] * 60
         if now - self.last_comment_time < cooldown_sec:
@@ -278,14 +305,11 @@ class AutoComment(loader.Module):
             self._save_state()
             return
         
-        # Определяем текст комментария
         comment_text, is_required = self._get_comment_text(text)
         
         try:
-            # 🔍 Ищем группу для комментариев (discussion group)
             comment_target = post.peer_id
             
-            # Проверяем, есть ли у канала привязанная группа
             try:
                 if hasattr(post, 'chat') and post.chat:
                     channel = await self.client.get_entity(post.chat_id)
@@ -297,14 +321,12 @@ class AutoComment(loader.Module):
             except Exception as e:
                 logger.debug(f"Error getting discussion: {e}")
             
-            # 📝 Отправляем комментарий
             sent_msg = await self.client.send_message(
                 comment_target,
                 comment_text,
                 reply_to=post.id
             )
             
-            # Обновляем статистику
             self.last_comment_time = now
             self.processed_posts.add(post.id)
             self.stats["sent"] += 1
@@ -312,15 +334,12 @@ class AutoComment(loader.Module):
             
             logger.info(f"Comment sent to {comment_target}: '{comment_text}' (required: {is_required})")
             
-            # ⏳ Ждём перед проверкой
             check_delay = self.config["check_delay"]
             if check_delay > 0:
                 await asyncio.sleep(check_delay)
             
-            # 🔍 Проверяем позицию
             is_first, position = await self._get_my_comment_position(post, sent_msg.id, comment_target)
             
-            # 🔔 Уведомление
             channel_title = getattr(post.chat, 'title', 'Unknown')
             post_link = f"https://t.me/c/{str(post.peer_id.channel_id).replace('-100', '')}/{post.id}" if hasattr(post.peer_id, 'channel_id') else f"https://t.me/{getattr(post.chat, 'username', '')}/{post.id}"
             time_now = datetime.now().strftime("%H:%M:%S")
@@ -365,7 +384,6 @@ class AutoComment(loader.Module):
             return
         
         try:
-            # Исправление: проверяем тип перед вызовом lstrip()
             if isinstance(channel_id, str) and channel_id.lstrip('-').isdigit():
                 channel = await self.client.get_entity(int(channel_id))
             else:
@@ -392,6 +410,11 @@ class AutoComment(loader.Module):
         logger.info("Watch loop stopped")
 
     def _start_watch_internal(self):
+        # 📌 Запоминаем время запуска и ID последнего поста
+        self.watch_start_time = datetime.now().timestamp()
+        self.watch_start_post_id = None
+        self._save_state()
+        
         if self._watch_task and not self._watch_task.done():
             self._watch_task.cancel()
         self._watch_task = asyncio.create_task(self._watch_loop())
@@ -435,7 +458,7 @@ class AutoComment(loader.Module):
         args = utils.get_args_raw(message).strip().split(maxsplit=1)
         if not args:
             text = (
-                "<b>⚙️ AutoComment v3.1 настройки</b>\n\n"
+                "<b>⚙️ AutoComment v3.2 настройки</b>\n\n"
                 f"📺 <b>Канал:</b> <code>{self.config['channel_id']}</code>\n"
                 f"🔑 <b>Триггеры:</b> <code>{self.config['keywords']}</code>\n"
                 f"💬 <b>Рандом:</b> <code>{self.config['comments']}</code>\n"
@@ -562,11 +585,16 @@ class AutoComment(loader.Module):
         )
         if self.stats["sent"] > 0:
             text += f"\n🎯 <b>Успешно:</b> {self.stats['sent']} комментов"
+        if self.watch_start_time:
+            start_dt = datetime.fromtimestamp(self.watch_start_time)
+            text += f"\n📌 <b>Запущен:</b> {start_dt.strftime('%H:%M:%S')}"
         await utils.answer(message, text)
 
     @loader.command()
     async def acclear(self, message: Message):
         """— Очистить кэш постов"""
         self.processed_posts.clear()
+        self.watch_start_time = None
+        self.watch_start_post_id = None
         self._save_state()
         await utils.answer(message, "🗑 <b>Кэш очищен</b>")
