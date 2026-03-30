@@ -1,7 +1,7 @@
 
 # scope heroku_min: 2.0.0
 
-__version__ = ("1", "0", "4")
+__version__ = ("1", "0", "5")
 
 # meta developer: @pendulation
 
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 @loader.tds
 class AutoComment(loader.Module):
-    """Умные автокомментарии: только новые посты после запуска."""
+    """Умные автокомментарии: проверка настроек, отправка в комментарии."""
     
     strings = {
         "name": "AutoComment",
@@ -31,14 +31,14 @@ class AutoComment(loader.Module):
         "cfg_skip_buttons": "Пропускать посты с кнопками? (да/нет)",
         "cfg_skip_timers": "Пропускать посты с таймером итогов? (да/нет)",
         
-        "start_watch": "✅ <b>🟢 AutoComment v3.2 запущен</b>\n📺 Канал: {channel}\n🔑 Триггеры: {keywords}\n💬 Рандом: {comments}\n🔍 Проверка через: {check_delay}с\n🔔 Уведомления: {notify}\n🚫 Пропуск кнопок: {skip_btn}\n🚫 Пропуск таймеров: {skip_timer}\n📌 <b>Только новые посты!</b>",
+        "start_watch": "✅ <b>🟢 AutoComment v3.3 запущен</b>\n📺 Канал: {channel}\n🔑 Триггеры: {keywords}\n💬 Рандом: {comments}\n🔍 Проверка через: {check_delay}с\n🔔 Уведомления: {notify}\n🚫 Пропуск кнопок: {skip_btn}\n🚫 Пропуск таймеров: {skip_timer}\n📌 <b>Только новые посты!</b>",
         "stop_watch": "🛑 <b>🔴 Мониторинг остановлен</b>",
         
         "keyword_found": "🔍 <b>Триггер найден!</b>\n📝 Пост #{post_id}\n🔑 Совпадение: {matched}",
         "required_word_found": "📝 <b>Найдено требуемое слово!</b>\n💬 Пишу: «{word}»",
         "random_comment": "🎲 <b>Рандомный комментарий</b>\n💬 Пишу: «{word}»",
         
-        "comment_sent": "✅ <b>Комментарий отправлен!</b>\n📝 Пост: {post_id}\n💬 Текст: «{comment}»\n⏳ Проверяю позицию...",
+        "comment_sent": "✅ <b>Комментарий отправлен!</b>\n📝 Пост: {post_id}\n💬 Текст: «{comment}»",
         
         "notify_first": "🥇 <b>ТЫ ПЕРВЫЙ!</b>\n📺 {channel}\n🔗 Пост: {post_link}\n💬 Твой коммент: «{comment}»\n⏰ {time}",
         "notify_not_first": "📍 <b>Не первый</b>\n📺 {channel}\n🔗 Пост: {post_link}\n💬 Твой коммент: «{comment}»\n📊 Позиция: #{position}\n⏰ {time}",
@@ -53,6 +53,13 @@ class AutoComment(loader.Module):
         "rate_limit": "⏳ Кулдаун: ждём {seconds}с",
         "no_config": "❌ Настрой модуль: .accfg",
         "watching_status": "👁 <b>Статус:</b> {status}\n📺 Канал: {channel}\n📊 Постов: {processed} | 💬 Комментов: {sent} | ⏭ Пропущено: {skipped}",
+        
+        "check_title": "🔍 <b>Проверка настроек канала</b>\n\n",
+        "check_channel": "📺 <b>Канал:</b> {title}\n├ ID: <code>{id}</code>\n├ Username: @{username}\n└ Тип: {type}\n\n",
+        "check_discussion": "💬 <b>Discussion group:</b>\n├ Найдена: {found}\n├ ID: <code>{id}</code>\n└ Название: {title}\n\n",
+        "check_permissions": "🔐 <b>Права доступа:</b>\n{perms}\n",
+        "check_warning": "\n⚠️ <b>Внимание:</b> {warning}",
+        "check_error": "❌ <b>Ошибка:</b> {error}",
     }
 
     def __init__(self):
@@ -203,7 +210,6 @@ class AutoComment(loader.Module):
             return False
         
         try:
-            # Сравниваем дату сообщения с временем запуска
             if hasattr(message, 'date') and message.date:
                 msg_timestamp = message.date.timestamp()
                 if msg_timestamp < self.watch_start_time:
@@ -211,7 +217,6 @@ class AutoComment(loader.Module):
         except Exception:
             pass
         
-        # Также проверяем по ID поста (если известно)
         if self.watch_start_post_id and message.id < self.watch_start_post_id:
             return True
         
@@ -229,40 +234,39 @@ class AutoComment(loader.Module):
         logger.info(f"Random comment: {random_comment}")
         return random_comment, False
 
-    async def _get_my_comment_position(self, post: Message, my_message_id: int, comment_target=None) -> tuple[bool, int]:
-        """Проверяет позицию нашего комментария"""
+    async def _find_discussion_group(self, channel):
+        """Ищет discussion group для канала"""
         try:
-            target = comment_target if comment_target else post.peer_id
+            # Проверяем есть ли discussion в канале
+            if hasattr(channel, 'discussion') and channel.discussion:
+                return channel.discussion
             
-            comments = []
-            async for comment in self.client.iter_messages(
-                target, 
-                reply_to=post.id, 
-                limit=50
-            ):
-                comments.append(comment)
+            # Пробуем получить полную информацию о канале
+            try:
+                full_channel = await self.client(functions.channels.GetFullChannelRequest(channel))
+                if full_channel and hasattr(full_channel, 'full_chat'):
+                    if hasattr(full_channel.full_chat, 'linked_chat_id'):
+                        linked_id = full_channel.full_chat.linked_chat_id
+                        if linked_id:
+                            return linked_id
+            except Exception as e:
+                logger.debug(f"GetFullChannel error: {e}")
             
-            if not comments:
-                return True, 1
-            
-            comments.sort(key=lambda x: x.date)
-            
-            for i, comment in enumerate(comments, 1):
-                if comment.id == my_message_id:
-                    return i == 1, i
-            
-            return False, 0
+            # Ищем среди диалогов
+            async for dialog in self.client.iter_dialogs():
+                if hasattr(dialog, 'is_group') and dialog.is_group:
+                    try:
+                        full_chat = await self.client(functions.messages.GetFullChatRequest(dialog.id))
+                        if hasattr(full_chat, 'full_chat') and hasattr(full_chat.full_chat, 'linked_chat_id'):
+                            if full_chat.full_chat.linked_chat_id == channel.id:
+                                return dialog.id
+                    except Exception:
+                        continue
             
         except Exception as e:
-            logger.debug(f"Position check error: {e}")
-            return False, 0
-
-    async def _send_notify(self, message: str, chat_id: str = None):
-        try:
-            target = int(chat_id) if chat_id and chat_id != "0" else await self.client.get_me()
-            await self.client.send_message(target, message, parse_mode="html", link_preview=False)
-        except Exception as e:
-            logger.error(f"Notify error: {e}")
+            logger.error(f"Error finding discussion: {e}")
+        
+        return None
 
     async def _process_post(self, post: Message):
         """Основная логика обработки поста"""
@@ -297,6 +301,7 @@ class AutoComment(loader.Module):
                 logger.info(f"Skip post {post.id}: timer detected")
             return
         
+        # Проверка кулдауна
         now = datetime.now().timestamp()
         cooldown_sec = self.config["cooldown"] * 60
         if now - self.last_comment_time < cooldown_sec:
@@ -305,70 +310,55 @@ class AutoComment(loader.Module):
             self._save_state()
             return
         
+        # Определяем текст комментария
         comment_text, is_required = self._get_comment_text(text)
         
         try:
-            comment_target = post.peer_id
+            # 🔍 Ищем discussion group (группу для комментариев)
+            comment_target = await self._find_discussion_group(post.chat)
             
-            try:
-                if hasattr(post, 'chat') and post.chat:
-                    channel = await self.client.get_entity(post.chat_id)
-                    if hasattr(channel, 'discussion'):
-                        discussion = channel.discussion
-                        if discussion:
-                            comment_target = discussion
-                            logger.info(f"Found discussion group: {discussion.id}")
-            except Exception as e:
-                logger.debug(f"Error getting discussion: {e}")
+            # Если не нашли discussion, используем peer_id поста
+            if not comment_target:
+                comment_target = post.peer_id
+                logger.warning(f"Discussion not found, using: {comment_target}")
+            else:
+                logger.info(f"Found discussion group: {comment_target}")
             
+            # 📝 Отправляем комментарий В ОБСУЖДЕНИЕ
             sent_msg = await self.client.send_message(
                 comment_target,
                 comment_text,
-                reply_to=post.id
+                reply_to=post.id  # Это создаст комментарий к посту
             )
             
+            # ✅ Сразу помечаем пост как обработанный
             self.last_comment_time = now
             self.processed_posts.add(post.id)
             self.stats["sent"] += 1
             self._save_state()
             
-            logger.info(f"Comment sent to {comment_target}: '{comment_text}' (required: {is_required})")
+            logger.info(f"✅ Comment sent to {comment_target}: '{comment_text}' (required: {is_required})")
             
-            check_delay = self.config["check_delay"]
-            if check_delay > 0:
-                await asyncio.sleep(check_delay)
-            
-            is_first, position = await self._get_my_comment_position(post, sent_msg.id, comment_target)
-            
+            # 🔔 Уведомление СРАЗУ (без проверки позиции!)
             channel_title = getattr(post.chat, 'title', 'Unknown')
             post_link = f"https://t.me/c/{str(post.peer_id.channel_id).replace('-100', '')}/{post.id}" if hasattr(post.peer_id, 'channel_id') else f"https://t.me/{getattr(post.chat, 'username', '')}/{post.id}"
             time_now = datetime.now().strftime("%H:%M:%S")
             
             comment_type = "📋 Требуемое" if is_required else "🎲 Рандом"
             
-            if is_first:
-                notify_msg = (
-                    f"🥇 <b>ТЫ ПЕРВЫЙ!</b>\n"
-                    f"📺 {channel_title}\n"
-                    f"🔗 Пост: {post_link}\n"
-                    f"💬 Твой коммент: «{comment_text}»\n"
-                    f"🏷 Тип: {comment_type}\n"
-                    f"⏰ {time_now}"
-                )
-                logger.info(f"🥇 FIRST! Post {post.id}")
-            else:
-                notify_msg = (
-                    f"📍 <b>Не первый</b>\n"
-                    f"📺 {channel_title}\n"
-                    f"🔗 Пост: {post_link}\n"
-                    f"💬 Твой коммент: «{comment_text}»\n"
-                    f"🏷 Тип: {comment_type}\n"
-                    f"📊 Позиция: #{position if position > 0 else '?'}\n"
-                    f"⏰ {time_now}"
-                )
-                logger.info(f"📍 Not first (#{position}). Post {post.id}")
+            # Простое уведомление — написал и всё
+            notify_msg = (
+                f"✅ <b>Комментарий отправлен!</b>\n"
+                f"📺 {channel_title}\n"
+                f"🔗 Пост: {post_link}\n"
+                f"💬 Текст: «{comment_text}»\n"
+                f"🏷 Тип: {comment_type}\n"
+                f"⏰ {time_now}"
+            )
             
             await self._send_notify(notify_msg, self.config["notify_chat"])
+            
+            # ✅ Всё! Больше не трогаем этот пост, ждём следующий
             
         except errors.FloodWaitError as e:
             logger.warning(f"FloodWait: wait {e.seconds}s")
@@ -376,6 +366,13 @@ class AutoComment(loader.Module):
         except Exception as e:
             logger.error(f"Error: {e}")
             await self._send_notify(f"❌ Ошибка: {e}", self.config["notify_chat"])
+
+    async def _send_notify(self, message: str, chat_id: str = None):
+        try:
+            target = int(chat_id) if chat_id and chat_id != "0" else await self.client.get_me()
+            await self.client.send_message(target, message, parse_mode="html", link_preview=False)
+        except Exception as e:
+            logger.error(f"Notify error: {e}")
 
     async def _watch_loop(self):
         channel_id = self.config["channel_id"]
@@ -453,12 +450,91 @@ class AutoComment(loader.Module):
         await utils.answer(message, self.strings["stop_watch"])
 
     @loader.command()
+    async def accheck(self, message: Message):
+        """— Проверить настройки канала"""
+        if not self.config["channel_id"]:
+            return await utils.answer(message, "❌ Укажите канал: .accfg channel -1001234567890")
+        
+        try:
+            channel_id = self.config["channel_id"]
+            if isinstance(channel_id, str) and channel_id.lstrip('-').isdigit():
+                channel = await self.client.get_entity(int(channel_id))
+            else:
+                channel = await self.client.get_entity(channel_id)
+            
+            text = self.strings["check_title"]
+            
+            # Информация о канале
+            channel_type = "Канал" if hasattr(channel, 'broadcast') else "Группа"
+            username = getattr(channel, 'username', 'Нет') or 'Нет'
+            text += self.strings["check_channel"].format(
+                title=getattr(channel, 'title', 'Unknown'),
+                id=channel.id,
+                username=username,
+                type=channel_type
+            )
+            
+            # Проверка discussion group
+            discussion_id = await self._find_discussion_group(channel)
+            if discussion_id:
+                try:
+                    discussion = await self.client.get_entity(discussion_id)
+                    discussion_title = getattr(discussion, 'title', 'Unknown')
+                    text += self.strings["check_discussion"].format(
+                        found="✅ Да",
+                        id=discussion_id if isinstance(discussion_id, int) else discussion_id.id,
+                        title=discussion_title
+                    )
+                except Exception:
+                    text += self.strings["check_discussion"].format(
+                        found="✅ Да",
+                        id=discussion_id,
+                        title="Неизвестно"
+                    )
+            else:
+                text += self.strings["check_discussion"].format(
+                    found="❌ Нет",
+                    id="—",
+                    title="—"
+                )
+                text += self.strings["check_warning"].format(
+                    warning="Discussion group не найдена! Комментарии будут отправляться в сам канал."
+                )
+            
+            # Проверка прав доступа
+            perms = []
+            try:
+                me = await self.client.get_me()
+                participant = await self.client(functions.channels.GetParticipantRequest(channel, me.id))
+                
+                if hasattr(participant, 'participant'):
+                    p = participant.participant
+                    if hasattr(p, 'admin_rights') and p.admin_rights:
+                        if p.admin_rights.post_messages:
+                            perms.append("✅ Публикация сообщений")
+                        if p.admin_rights.invite_users:
+                            perms.append("✅ Приглашение пользователей")
+                    elif hasattr(p, 'banned') and p.banned:
+                        perms.append("❌ Забанен")
+                    else:
+                        perms.append("⚠️ Обычный участник")
+            except Exception as e:
+                perms.append(f"⚠️ Не удалось проверить: {e}")
+            
+            text += self.strings["check_permissions"].format(perms="\n".join(perms))
+            
+            await utils.answer(message, text)
+            
+        except Exception as e:
+            await utils.answer(message, self.strings["check_error"].format(error=str(e)))
+
+    @loader.command()
     async def accfg(self, message: Message):
         """— Показать/изменить настройки"""
         args = utils.get_args_raw(message).strip().split(maxsplit=1)
         if not args:
             text = (
-                "<b>⚙️ AutoComment v3.2 настройки</b>\n\n"
+                "<b>⚙️ AutoComment v3.3 настройки</b>\n\n"
                 f"📺 <b>Канал:</b> <code>{self.config['channel_id']}</code>\n"
                 f"🔑 <b>Триггеры:</b> <code>{self.config['keywords']}</code>\n"
                 f"💬 <b>Рандом:</b> <code>{self.config['comments']}</code>\n"
@@ -473,7 +549,8 @@ class AutoComment(loader.Module):
                 "<code>.acdelay 3</code>\n"
                 "<code>.acnotify 0</code>\n"
                 "<code>.acbuttons да/нет</code>\n"
-                "<code>.actimers да/нет</code>"
+                "<code>.actimers да/нет</code>\n"
+                "<code>.accheck</code> — проверить настройки"
             )
             return await utils.answer(message, text)
         
