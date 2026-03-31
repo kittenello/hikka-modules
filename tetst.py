@@ -1,11 +1,12 @@
 # scope heroku_min: 2.0.0
 # meta developer: @pendulation
-# version: 4.0.0
+# version: 4.1.0 (Strict One-Shot Edition)
 
 import asyncio
 import logging
 import re
 import random
+import time
 from datetime import datetime
 from telethon import functions, errors, types, events
 from telethon.tl.types import Message
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 @loader.tds
 class AutoComment(loader.Module):
-    """🚀 ULTRA FAST: Мгновенные автокомментарии через Events"""
+    """🚀 ULTRA FAST: Пишет ОДИН раз и только на НОВЫЕ посты"""
     
     strings = {
         "name": "AutoComment",
@@ -24,10 +25,6 @@ class AutoComment(loader.Module):
         "cfg_comments": "Варианты ответов через |",
         "cfg_notify_chat": "ID для уведомлений (0 = Избранное)",
         "cfg_cooldown": "Кулдаун (минуты)",
-        
-        "start_watch": "🚀 <b>AutoComment v4.0 ЗАПУЩЕН</b>\n📺 Канал: <code>{channel}</code>\n⚡️ Режим: <b>Мгновенный (Events)</b>",
-        "stop_watch": "🛑 <b>Остановлен</b>",
-        "watching_status": "👁 <b>Статус:</b> {status}\n📊 Постов: {processed} | 💬 Комментов: {sent}",
     }
 
     def __init__(self):
@@ -42,21 +39,15 @@ class AutoComment(loader.Module):
         self.is_watching = False
         self.last_comment_time = 0
         self.processed_posts = set()
-        self.stats = {"processed": 0, "sent": 0}
-        self.watch_start_time = None
+        self.start_ts = 0  # Время запуска скрипта
 
     async def client_ready(self, client, db):
         self.client = client
         self.db = db
         self.is_watching = self.db.get(self.__class__.__name__, "watching", False)
-        self.stats = self.db.get(self.__class__.__name__, "stats", {"processed": 0, "sent": 0})
         
         if self.is_watching and self.config["channel_id"]:
             await self._start_watch_internal()
-
-    def _save_state(self):
-        self.db.set(self.__class__.__name__, "watching", self.is_watching)
-        self.db.set(self.__class__.__name__, "stats", self.stats)
 
     def _check_keywords(self, text: str) -> bool:
         if not text: return False
@@ -64,116 +55,94 @@ class AutoComment(loader.Module):
         keywords = [k.strip().lower() for k in self.config["keywords"].split(",") if k.strip()]
         return any(k in text_lower for k in keywords)
 
-    async def _find_discussion_group(self, channel):
-        """Поиск ID чата для комментариев"""
+    async def _find_discussion_group(self, channel_id):
         try:
-            full_channel = await self.client(functions.channels.GetFullChannelRequest(channel))
-            return getattr(full_channel.full_chat, 'linked_chat_id', None)
-        except:
-            return None
-
-    async def _send_notify(self, text):
-        target = "me" if self.config["notify_chat"] == "0" else int(self.config["notify_chat"])
-        try:
-            await self.client.send_message(target, text, parse_mode="html")
-        except: pass
+            full = await self.client(functions.channels.GetFullChannelRequest(channel_id))
+            return getattr(full.full_chat, 'linked_chat_id', None)
+        except: return None
 
     async def _handler(self, event):
-        """Мгновенный обработчик нового сообщения"""
-        if not self.is_watching: return
+        if not self.is_watching or not event.is_channel: return
         
         post = event.message
-        
-        # 1. Проверка на дубли и старье
-        if post.id in self.processed_posts or not post.text:
+
+        # ✅ ЖЕСТКАЯ ПРОВЕРКА 1: Только посты, вышедшие ПОСЛЕ запуска
+        # (Защита от комментирования старых постов при старте)
+        if post.date.timestamp() < self.start_ts:
             return
-        
-        # 2. Проверка ключевых слов
+
+        # ✅ ЖЕСТКАЯ ПРОВЕРКА 2: Один пост - один комментарий
+        if post.id in self.processed_posts:
+            return
+
+        # ✅ ЖЕСТКАЯ ПРОВЕРКА 3: Ключевые слова
         if not self._check_keywords(post.text):
             return
 
-        # 3. Кулдаун
-        now = datetime.now().timestamp()
+        # ✅ ЖЕСТКАЯ ПРОВЕРКА 4: Кулдаун
+        now = time.time()
         if now - self.last_comment_time < self.config["cooldown"] * 60:
             return
 
-        try:
-            # Ищем куда писать (дискуссия)
-            discussion_id = await self._find_discussion_group(post.chat_id)
-            
-            if not discussion_id or discussion_id == post.chat_id:
-                logger.error("❌ Чат обсуждения не найден!")
-                return
+        # Если все проверки прошли, помечаем пост СРАЗУ (до отправки), чтобы не было дублей
+        self.processed_posts.add(post.id)
 
-            # Текст комментария
+        try:
+            discussion_id = await self._find_discussion_group(post.chat_id)
+            if not discussion_id: return
+
             comment_text = random.choice(self.config["comments"].split("|")).strip()
 
-            # 🔥 САМАЯ БЫСТРАЯ ОТПРАВКА
+            # 🔥 ОТПРАВКА
             await self.client.send_message(
                 entity=discussion_id,
                 message=comment_text,
-                comment_to=post.id # Ключевой параметр для Telethon
+                comment_to=post.id
             )
 
-            # Сохраняем состояние
-            self.processed_posts.add(post.id)
             self.last_comment_time = now
-            self.stats["sent"] += 1
-            self._save_state()
-
-            # Уведомление (в фоне, чтобы не тормозить)
-            asyncio.create_task(self._send_notify(f"✅ <b>Взял!</b>\nКанал: {post.chat_id}\nТекст: {comment_text}"))
+            logger.info(f"✅ Коммент отправлен к посту {post.id}")
+            
+            # Уведомление
+            target = "me" if self.config["notify_chat"] == "0" else int(self.config["notify_chat"])
+            asyncio.create_task(self.client.send_message(target, f"🚀 <b>Взял!</b>\nТекст: {comment_text}"))
 
         except Exception as e:
-            logger.error(f"Ошибка при отправке: {e}")
+            logger.error(f"Ошибка: {e}")
 
     async def _start_watch_internal(self):
-        """Регистрация события"""
         try:
-            self.client.remove_event_handler(self._handler) # Чистим старые
+            self.start_ts = time.time() # Фиксируем время старта
+            self.processed_posts.clear() # Очищаем кэш при новом запуске
             
-            # Определяем цель (ID или username)
+            self.client.remove_event_handler(self._handler)
+            
             channel_input = self.config["channel_id"]
-            if str(channel_input).lstrip('-').isdigit():
-                target = int(channel_input)
-            else:
-                target = channel_input
+            target = int(channel_input) if str(channel_input).lstrip('-').isdigit() else channel_input
 
-            # Вешаем обработчик события "Новое сообщение"
             self.client.add_event_handler(self._handler, events.NewMessage(chats=target))
-            self.watch_start_time = datetime.now().timestamp()
-            logger.info(f"⚡️ Event Handler запущен на {target}")
+            logger.info(f"⚡️ Мониторинг {target} запущен. Игнорируем всё что было до {datetime.now().strftime('%H:%M:%S')}")
         except Exception as e:
             logger.error(f"Ошибка запуска: {e}")
 
     @loader.command()
     async def acstart(self, message: Message):
-        """Запустить мониторинг"""
+        """Запустить (игнорирует старые посты)"""
         args = utils.get_args_raw(message)
         if args: self.config["channel_id"] = args
         
         if not self.config["channel_id"]:
-            return await utils.answer(message, "❌ Укажите ID канала")
+            return await utils.answer(message, "❌ Укажите ID")
 
         self.is_watching = True
         await self._start_watch_internal()
-        self._save_state()
-        await utils.answer(message, self.strings["start_watch"].format(channel=self.config["channel_id"]))
+        self.db.set(self.__class__.__name__, "watching", True)
+        await utils.answer(message, f"🚀 <b>AutoComment ЗАПУЩЕН</b>\n📺 Канал: <code>{self.config['channel_id']}</code>\n<i>Старые посты будут проигнорированы.</i>")
 
     @loader.command()
     async def acstop(self, message: Message):
-        """Остановить мониторинг"""
+        """Остановить"""
         self.is_watching = False
         self.client.remove_event_handler(self._handler)
-        self._save_state()
-        await utils.answer(message, self.strings["stop_watch"])
-
-    @loader.command()
-    async def acstat(self, message: Message):
-        """Статистика"""
-        status = "🟢 Активен" if self.is_watching else "🔴 Остановлен"
-        await utils.answer(message, self.strings["watching_status"].format(
-            status=status, 
-            processed=self.stats.get("processed", 0), 
-            sent=self.stats.get("sent", 0)
-        ))
+        self.db.set(self.__class__.__name__, "watching", False)
+        await utils.answer(message, "🛑 <b>Остановлен</b>")
