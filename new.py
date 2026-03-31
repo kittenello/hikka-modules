@@ -251,170 +251,113 @@ class AutoComment(loader.Module):
             logger.error(f"Notify error: {e}")
 
     async def _process_post(self, post: Message):
-        """ИСПРАВЛЕНО: ТОЛЬКО комментарии, БЕЗ дублей!"""
+        """ИСПРАВЛЕНО: ТОЛЬКО комментарии через ветку обсуждения"""
         
-        # ✅ ПРОВЕРКА 1: Уже обработан?
+        # 1. Защита от дублей
         if post.id in self.processed_posts:
-            logger.info(f"⏭ Post {post.id} уже обработан, пропускаем")
+            logger.debug(f"⏭ Post {post.id} уже в кэше")
             return
         
-        # ✅ ПРОВЕРКА 2: Старый пост (до запуска)?
-        if self._is_old_post(post):
-            logger.debug(f"⏭ Post {post.id} старый (до запуска)")
-            self.stats["skipped"] += 1
-            self._save_state()
-            return
-        
-        # ✅ ПРОВЕРКА 3: Сервисное сообщение или нет текста?
-        if isinstance(post, types.MessageService) or not post.text:
+        # 2. Базовые проверки (старый пост, сервисное, пустое)
+        if self._is_old_post(post) or isinstance(post, types.MessageService) or not post.text:
             return
         
         self.stats["processed"] += 1
-        text = post.text or ""
+        text = post.text
         
-        # ✅ ПРОВЕРКА 4: Есть триггеры?
+        # 3. Поиск триггеров
         matched = self._check_keywords(text)
         if not matched:
             self._save_state()
             return
         
-        logger.info(f"🔍 Post {post.id}: найдены триггеры {matched}")
-        
-        # ✅ ПРОВЕРКА 5: Кнопки/таймеры?
+        # 4. Проверка на кнопки/таймеры
         should_skip, skip_reason = self._should_skip_post(post, text)
         if should_skip:
-            logger.info(f"⏭ Post {post.id} пропущен: {skip_reason}")
+            logger.info(f"⏭ Пропуск поста {post.id}: {skip_reason}")
             self.stats["skipped"] += 1
             self._save_state()
             return
-        
-        # ✅ ПРОВЕРКА 6: Кулдаун
+            
+        # 5. Кулдаун
         now = datetime.now().timestamp()
-        cooldown_sec = self.config["cooldown"] * 60
-        if now - self.last_comment_time < cooldown_sec:
-            remaining = int(cooldown_sec - (now - self.last_comment_time))
-            logger.info(f"⏳ Кулдаун: ждем {remaining}s")
-            self._save_state()
+        if now - self.last_comment_time < self.config["cooldown"] * 60:
             return
-        
-        # Получаем текст комментария
+
+        # 6. Подготовка текста
         comment_text, is_required = self._get_comment_text(text)
-        logger.info(f"📝 Comment text: '{comment_text}' (required: {is_required})")
         
         try:
-            # 🔍 Ищем discussion group
+            # Ищем ID чата для обсуждений
             discussion_id = await self._find_discussion_group(post.chat)
             
-            # ❌ НЕТ DISCUSSION — ПРОПУСКАЕМ!
-            if not discussion_id:
-                logger.error(f"❌ Post {post.id}: НЕТ DISCUSSION GROUP!")
+            # КРИТИЧЕСКАЯ ПРОВЕРКА: Если discussion_id совпадает с каналом — это ошибка
+            if not discussion_id or discussion_id == post.chat_id:
+                logger.error(f"❌ Для канала {post.chat_id} не привязан чат обсуждения!")
                 self.stats["skipped"] += 1
-                self._save_state()
-                
-                # Уведомляем
-                try:
-                    await self._send_notify(
-                        f"❌ <b>НЕТ DISCUSSION!</b>\n"
-                        f"📺 {getattr(post.chat, 'title', 'Unknown')}\n"
-                        f"🔗 Пост: {post.id}\n"
-                        f"⚠️ Создайте discussion в настройках канала!",
-                        self.config["notify_chat"]
-                    )
-                except:
-                    pass
                 return
-            
-            logger.info(f"✅ Post {post.id}: discussion_id = {discussion_id}")
-            
-            # 🔥 ВАЖНО: Проверяем что discussion_id != channel_id
-            channel_id = post.chat_id
-            if discussion_id == channel_id:
-                logger.error(f"❌ discussion_id == channel_id! Это канал, не discussion!")
-                self.stats["skipped"] += 1
-                self._save_state()
-                return
-            
-            # 📝 ОТПРАВКА КОММЕНТАРИЯ (ОДИН РАЗ!)
-            logger.info(f"📤 Отправляем комментарий в discussion {discussion_id}, reply_to={post.id}")
-            
-            sent_msg = await self.client.send_message(
-                discussion_id,        # ТОЛЬКО discussion!
-                comment_text,
-                reply_to=post.id      # Это создаст комментарий к посту
+
+            # 🔥 ОТПРАВКА: Используем comment_to для железной привязки к ветке
+            await self.client.send_message(
+                entity=discussion_id,
+                message=comment_text,
+                comment_to=post  # Telethon сам найдет правильный reply_to внутри чата
             )
             
-            logger.info(f"✅ Комментарий отправлен! ID: {sent_msg.id}")
+            logger.info(f"✅ Коммент отправлен в обсуждение {discussion_id} к посту {post.id}")
             
-            # ✅ Помечаем как обработанный (ЧТОБЫ НЕ БЫЛО ДУБЛЕЙ!)
+            # Обновляем состояние СРАЗУ после успешной отправки
             self.last_comment_time = now
-            self.processed_posts.add(post.id)  # 🔥 ВАЖНО!
+            self.processed_posts.add(post.id)
             self.stats["sent"] += 1
             self._save_state()
             
-            # Уведомление
-            channel_title = getattr(post.chat, 'title', 'Unknown')
-            try:
-                channel_username = getattr(post.chat, 'username', None)
-                if channel_username:
-                    post_link = f"https://t.me/{channel_username}/{post.id}"
-                else:
-                    post_link = f"ID: {post.id}"
-            except:
-                post_link = f"ID: {post.id}"
-            
+            # Уведомление в логи/избранное
+            channel_title = getattr(post.chat, 'title', 'Channel')
             time_now = datetime.now().strftime("%H:%M:%S")
-            comment_type = "📋 Требуемое" if is_required else "🎲 Рандом"
-            
             notify_msg = (
-                f"✅ <b>Комментарий!</b>\n"
+                f"✅ <b>Комментарий оставлен!</b>\n"
                 f"📺 {channel_title}\n"
-                f"🔗 {post_link}\n"
                 f"💬 «{comment_text}»\n"
-                f"🏷 {comment_type}\n"
                 f"⏰ {time_now}"
             )
-            
             await self._send_notify(notify_msg, self.config["notify_chat"])
             
         except errors.FloodWaitError as e:
             logger.warning(f"FloodWait: {e.seconds}s")
             await asyncio.sleep(e.seconds + 5)
         except Exception as e:
-            logger.error(f"❌ Error processing post {post.id}: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            try:
-                await self._send_notify(f"❌ Ошибка: {e}", self.config["notify_chat"])
-            except:
-                pass
+            logger.error(f"❌ Ошибка в _process_post: {e}")
 
     async def _watch_loop(self):
+        """Цикл мониторинга канала"""
         channel_id = self.config["channel_id"]
         if not channel_id:
-            logger.error("No channel_id")
             return
         
         try:
-            if isinstance(channel_id, str) and channel_id.lstrip('-').isdigit():
-                channel = await self.client.get_entity(int(channel_id))
-            else:
-                channel = await self.client.get_entity(channel_id)
+            # Приводим ID к числу, если это строка из цифр
+            target = int(channel_id) if str(channel_id).lstrip('-').isdigit() else channel_id
+            channel = await self.client.get_entity(target)
         except Exception as e:
-            logger.error(f"Can't get channel: {e}")
+            logger.error(f"Не удалось получить доступ к каналу {channel_id}: {e}")
             return
         
-        logger.info(f"Watching: {channel}")
+        logger.info(f"🟢 Мониторинг запущен: {getattr(channel, 'title', channel_id)}")
         
         while self.is_watching:
             try:
+                # Берем последние 5 сообщений, чтобы не пропустить быстрые посты
                 async for post in self.client.iter_messages(channel, limit=5):
                     await self._process_post(post)
-                await asyncio.sleep(8)
+                
+                # Задержка между проверками (оптимально 5-10 сек)
+                await asyncio.sleep(7)
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Watch error: {e}")
-                await asyncio.sleep(20)
+                logger.error(f"Ошибка в цикле мониторинга: {e}")
+                await asyncio.sleep(15)
 
     def _start_watch_internal(self):
         self.watch_start_time = datetime.now().timestamp()
